@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { groundHeight, noise, random, riverCenter, riverWidth } from './terrain';
+import { createVegetation } from './createVegetation';
+import { createSnow } from './createSnow';
 
 export function createScene(container, initialNight, onFailure) {
   const rand = random();
@@ -30,7 +32,7 @@ export function createScene(container, initialNight, onFailure) {
     const color = new THREE.Color();
     let disposed = false, frame = 0, previous = 0, elapsed = 0;
     let targetNight = initialNight ? 1 : 0, night = targetNight;
-    let targetDusk = 0, dusk = 0, targetRain = 0, rain = 0, lastShadowUpdate = -1;
+    let targetDusk = 0, dusk = 0, targetRain = 0, rain = 0, targetSnow = 0, snow = 0, lastShadowUpdate = -1;
     const sunDirection = new THREE.Vector3(-48, 105, -250).normalize();
 
     const hemi = new THREE.HemisphereLight('#e2f1eb', '#3e5134', 2.4);
@@ -151,38 +153,68 @@ export function createScene(container, initialNight, onFailure) {
     water.rotation.x = -Math.PI / 2; water.position.set(0, .02, -108);
     water.material.uniforms.size.value = 5;
     water.receiveShadow = true;
+    // Advect the normal field down the winding channel, in addition to local ripples.
+    water.material.uniforms.flowTime = { value: 0 };
+    water.material.fragmentShader = 'uniform float flowTime;\n' + water.material.fragmentShader;
+    water.material.fragmentShader = water.material.fragmentShader.replace(
+      'vec4 noise = getNoise( worldPosition.xz * size );',
+      'float channel = 5.0 + sin(worldPosition.z * .035) * 11.0 + sin(worldPosition.z * .074) * 2.0;\nvec2 downstreamUv = vec2(worldPosition.x - channel, worldPosition.z - flowTime * 4.2);\nvec4 noise = getNoise(downstreamUv * size);'
+    );
     scene.add(water);
 
-    // Instancing keeps the forest inexpensive: three foliage layers share a handful of draw calls.
-    const trees = [];
-    for (let i = 0; i < (mobile ? 780 : 1450); i++) {
-      const x = (rand() - .5) * 215, z = 65 - rand() * 250;
-      const bank = Math.abs(x - riverCenter(z)) - riverWidth(z);
-      if (bank < 3 || (z > 14 && Math.abs(x - 24) < 13)) continue;
-      trees.push({ x, z, y: groundHeight(x, z), height: 3.2 + rand() * 7.8, width: .8 + rand() * .45, rotation: rand() * Math.PI * 2, tint: rand() });
+    // One curved strip carries broken foam trails and quick ripples downstream.
+    const foamPositions = [], foamUvs = [], foamIndices = [], foamSegments = 150;
+    for (let i = 0; i <= foamSegments; i++) {
+      const z = -170 + i / foamSegments * 255, center = riverCenter(z), width = riverWidth(z) * .89;
+      foamPositions.push(center - width, .075, z, center + width, .075, z);
+      foamUvs.push(-1, z, 1, z);
+      if (i < foamSegments) { const a = i * 2; foamIndices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
     }
-    const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(.10, .21, 1, 6), new THREE.MeshStandardMaterial({ color: '#68543d', roughness: 1 }), trees.length);
-    trees.forEach((t, i) => { dummy.position.set(t.x, t.y + t.height * .32, t.z); dummy.scale.set(1, t.height * .64, 1); dummy.rotation.set(0, t.rotation, 0); dummy.updateMatrix(); trunk.setMatrixAt(i, dummy.matrix); });
-    scene.add(trunk);
-    const treeGreen = new THREE.Color('#2a5d48'), treeLight = new THREE.Color('#628251');
-    for (let layer = 0; layer < 4; layer++) {
-      const geometry = new THREE.ConeGeometry(1, 1, 9, 3);
-      const p = geometry.attributes.position;
-      for (let i = 0; i < p.count; i++) {
-        const ripple = 1 + .1 * Math.sin(Math.atan2(p.getZ(i), p.getX(i)) * 9 + p.getY(i) * 18);
-        p.setX(i, p.getX(i) * ripple); p.setZ(i, p.getZ(i) * ripple);
-      }
-      geometry.computeVertexNormals();
-      const leaves = new THREE.InstancedMesh(geometry, new THREE.MeshStandardMaterial({ roughness: 1, flatShading: true }), trees.length);
-      leaves.castShadow = !mobile; leaves.receiveShadow = true;
-      trees.forEach((t, i) => {
-        const width = t.height * (.29 - layer * .052) * t.width;
-        dummy.position.set(t.x, t.y + t.height * (.32 + layer * .18), t.z);
-        dummy.rotation.set(0, t.rotation + layer * .5, 0); dummy.scale.set(width, t.height * .46, width); dummy.updateMatrix();
-        leaves.setMatrixAt(i, dummy.matrix); leaves.setColorAt(i, color.copy(treeGreen).lerp(treeLight, t.tint * .8 + layer * .045));
-      });
-      scene.add(leaves);
-    }
+    const foamGeometry = new THREE.BufferGeometry();
+    foamGeometry.setAttribute('position', new THREE.Float32BufferAttribute(foamPositions, 3));
+    foamGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(foamUvs, 2)); foamGeometry.setIndex(foamIndices);
+    const foamMaterial = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, fog: true,
+      uniforms: { ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), flowTime: { value: 0 }, brightness: { value: 1 }, foamColor: { value: new THREE.Color('#d5eee0') } },
+      vertexShader: `
+        varying vec2 flowUv;
+        #include <common>
+        #include <fog_pars_vertex>
+        void main() {
+          flowUv = uv;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          #include <fog_vertex>
+        }
+      `,
+      fragmentShader: `
+        uniform float flowTime; uniform float brightness; uniform vec3 foamColor;
+        varying vec2 flowUv;
+        #include <common>
+        #include <fog_pars_fragment>
+        float randomCell(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+        void main() {
+          float downstream = flowUv.y - flowTime * 4.2;
+          vec2 p = vec2(flowUv.x * 6.0 + sin(downstream * .12) * .23, downstream * .48);
+          vec2 cell = floor(p), f = fract(p) - .5;
+          float seed = randomCell(cell);
+          float streak = exp(-pow(f.x / (.045 + seed * .10), 2.0) - pow(f.y / (.18 + seed * .15), 2.0));
+          streak *= smoothstep(.82, .97, seed);
+          float riffle = pow(max(0.0, sin(downstream * 3.8 + sin(flowUv.x * 18.0) * 1.7)), 22.0);
+          riffle *= smoothstep(.3, .9, sin(downstream * .36 + flowUv.x * 24.0) * .5 + .5) * .12;
+          float bankFade = 1.0 - smoothstep(.7, 1.0, abs(flowUv.x));
+          float alpha = (streak * .66 + riffle) * bankFade * brightness;
+          if (alpha < .007) discard;
+          gl_FragColor = vec4(foamColor, alpha);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+          #include <fog_fragment>
+        }
+      `,
+    });
+    const foam = new THREE.Mesh(foamGeometry, foamMaterial); foam.renderOrder = 1; scene.add(foam);
+    const vegetation = createVegetation(scene, { mobile, rand, groundHeight, riverCenter, riverWidth });
+    initializationCleanup.push(() => vegetation.dispose());
 
     // Rounded river stones anchor the stream in the foreground.
     const stoneGeometry = new THREE.IcosahedronGeometry(1, 1);
@@ -196,18 +228,6 @@ export function createScene(container, initialNight, onFailure) {
       stones.setColorAt(i, color.setHSL(.15 + rand() * .05, .09, .32 + rand() * .2));
     }
     stones.castShadow = !mobile; stones.receiveShadow = true; scene.add(stones);
-
-    const bladeGeometry = new THREE.BufferGeometry();
-    bladeGeometry.setAttribute('position', new THREE.Float32BufferAttribute([-.06, 0, 0, .06, 0, 0, .10, .7, .06], 3));
-    bladeGeometry.computeVertexNormals();
-    const blades = new THREE.InstancedMesh(bladeGeometry, new THREE.MeshStandardMaterial({ color: '#819b53', side: THREE.DoubleSide, roughness: 1 }), mobile ? 1000 : 2600);
-    for (let i = 0; i < blades.count; i++) {
-      const z = 55 - rand() * 120, side = rand() > .5 ? 1 : -1;
-      const x = riverCenter(z) + side * (riverWidth(z) + 1.3 + rand() * 15);
-      dummy.position.set(x, groundHeight(x, z), z); dummy.rotation.set(0, rand() * 6.28, (rand() - .5) * .5);
-      const s = .5 + rand() * 1.3; dummy.scale.set(s, s, s); dummy.updateMatrix(); blades.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(blades);
 
     // Sparse flowers and reeds add a detailed foreground without filling the valley.
     const flowerCount = mobile ? 100 : 220;
@@ -224,16 +244,6 @@ export function createScene(container, initialNight, onFailure) {
       flowerHeads.setColorAt(i, color.set(petals[i % petals.length]));
     }
     scene.add(flowerStems, flowerHeads);
-    const reedCount = mobile ? 150 : 300;
-    const reeds = new THREE.InstancedMesh(bladeGeometry, new THREE.MeshStandardMaterial({ color: '#a3ac69', side: THREE.DoubleSide, roughness: 1 }), reedCount);
-    for (let i = 0; i < reedCount; i++) {
-      const z = 45 - rand() * 115, side = rand() > .5 ? 1 : -1;
-      const x = riverCenter(z) + side * (riverWidth(z) + .7 + rand() * 1.5);
-      dummy.position.set(x, groundHeight(x, z), z); dummy.rotation.set(0, rand() * Math.PI * 2, (rand() - .5) * .2);
-      const height = .9 + rand() * 1.3; dummy.scale.set(.7, height, .7); dummy.updateMatrix(); reeds.setMatrixAt(i, dummy.matrix);
-    }
-    scene.add(reeds);
-
     // A small flock glides slowly across the distant valley.
     const birdCount = 7, birdPositions = new Float32Array(birdCount * 12);
     const birdGeometry = new THREE.BufferGeometry();
@@ -248,6 +258,9 @@ export function createScene(container, initialNight, onFailure) {
     rainGeometry.attributes.position.setUsage(THREE.DynamicDrawUsage);
     const rainMaterial = new THREE.LineBasicMaterial({ color: '#c3d9df', transparent: true, opacity: 0, depthWrite: false });
     const rainfall = new THREE.LineSegments(rainGeometry, rainMaterial); rainfall.frustumCulled = false; rainfall.visible = false; scene.add(rainfall);
+
+    const snowfall = createSnow(scene, { mobile, rand, groundHeight });
+    initializationCleanup.push(() => snowfall.dispose());
 
     const cloudMap = glowTexture(true);
     const clouds = [];
@@ -289,6 +302,7 @@ export function createScene(container, initialNight, onFailure) {
     const duskCloud = new THREE.Color('#f6c6ac'), rainFog = new THREE.Color('#778f98');
     const darkRainFog = new THREE.Color('#152637'), rainCloud = new THREE.Color('#98a5ac');
     const currentRainFog = new THREE.Color();
+    const snowFog = new THREE.Color('#ccdcdf'), darkSnowFog = new THREE.Color('#263d51'), currentSnowFog = new THREE.Color();
     const mixMood = (destination, day, sunset, dark) => destination.copy(day).lerp(sunset, dusk).lerp(dark, night);
 
     function render(now = 0) {
@@ -304,45 +318,54 @@ export function createScene(container, initialNight, onFailure) {
       // Cap animation at 40 fps (30 on small screens); a static reduced-motion scene still updates controls.
       if (now - previous < (mobile ? 33 : 25)) return;
       const dt = Math.min((now - previous) / 1000, .08); previous = now;
-      const changing = Math.abs(targetNight - night) > .001 || Math.abs(targetDusk - dusk) > .001 || Math.abs(targetRain - rain) > .001;
+      const changing = Math.abs(targetNight - night) > .001 || Math.abs(targetDusk - dusk) > .001 || Math.abs(targetRain - rain) > .001 || Math.abs(targetSnow - snow) > .001;
       if (reducedMotion.matches && !changing && !scene.userData.needsRender) return;
       if (!reducedMotion.matches) elapsed += dt;
       night = reducedMotion.matches ? targetNight : THREE.MathUtils.damp(night, targetNight, 1.6, dt);
       dusk = reducedMotion.matches ? targetDusk : THREE.MathUtils.damp(dusk, targetDusk, 1.6, dt);
       rain = reducedMotion.matches ? targetRain : THREE.MathUtils.damp(rain, targetRain, 1.4, dt);
+      snow = reducedMotion.matches ? targetSnow : THREE.MathUtils.damp(snow, targetSnow, 1.2, dt);
+      const overcast = Math.min(1, rain + snow * .68);
+      vegetation.update(elapsed, reducedMotion.matches, rain, snow);
+      snowfall.update({ time: elapsed, intensity: snow, reducedMotion: reducedMotion.matches });
       skyMaterial.uniforms.night.value = night;
       skyMaterial.uniforms.dusk.value = dusk;
-      skyMaterial.uniforms.rain.value = rain;
+      skyMaterial.uniforms.rain.value = overcast;
       mixMood(scene.fog.color, dayFog, duskFog, nightFog).lerp(currentRainFog.copy(rainFog).lerp(darkRainFog, night), rain * .72);
-      scene.fog.density = .0055 + rain * .004;
-      mixMood(hemi.color, dayHemi, duskHemi, nightHemi); hemi.intensity = (2.4 - night * 1.55 - dusk * .35) * (1 - rain * .23);
-      mixMood(sunlight.color, daySun, duskSun, nightSun); sunlight.intensity = (3.2 - night * 2.35 - dusk * .3) * (1 - rain * .68);
+      scene.fog.color.lerp(currentSnowFog.copy(snowFog).lerp(darkSnowFog, night), snow * .66);
+      scene.fog.density = .0055 + rain * .004 + snow * .003;
+      mixMood(hemi.color, dayHemi, duskHemi, nightHemi); hemi.intensity = (2.4 - night * 1.55 - dusk * .35) * (1 - overcast * .23);
+      mixMood(sunlight.color, daySun, duskSun, nightSun); sunlight.intensity = (3.2 - night * 2.35 - dusk * .3) * (1 - overcast * .68);
       mixMood(sunMaterial.color, dayDisk, duskSun, nightDisk);
       sun.position.set(-48 + dusk * 15, 105 - dusk * 38, -250); sun.scale.setScalar(1 - night * .22 + dusk * .16);
-      sun.visible = rain < .97;
+      sun.visible = overcast < .97;
       sunDirection.copy(sun.position).normalize();
       sunlight.position.set(sun.position.x * .5, sun.position.y * .78, sun.position.z * .5);
       halo.position.copy(sun.position);
-      mixMood(haloMaterial.color, daySun, duskSun, nightDisk); haloMaterial.opacity = (.6 - night * .35 + dusk * .12) * (1 - rain * .9);
-      // Refresh static forest shadows only during lighting changes, at most four times a second.
+      mixMood(haloMaterial.color, daySun, duskSun, nightDisk); haloMaterial.opacity = (.6 - night * .35 + dusk * .12) * (1 - overcast * .9);
+      // Wind uses the same deformation in the depth pass; refresh shadows at a modest cadence.
       if (!mobile && scene.userData.needsRender) renderer.shadowMap.needsUpdate = true;
-      if (!mobile && changing && now - lastShadowUpdate > 250) { renderer.shadowMap.needsUpdate = true; lastShadowUpdate = now; }
-      water.material.uniforms.time.value = elapsed * .32;
-      mixMood(water.material.uniforms.sunColor.value, daySun, duskSun, nightSun).multiplyScalar(1 - rain * .45);
+      if (!mobile && (changing || !reducedMotion.matches) && now - lastShadowUpdate > 180) { renderer.shadowMap.needsUpdate = true; lastShadowUpdate = now; }
+      water.material.uniforms.time.value = elapsed * 1.05;
+      water.material.uniforms.flowTime.value = elapsed;
+      foamMaterial.uniforms.flowTime.value = elapsed;
+      foamMaterial.uniforms.brightness.value = 1 - night * .55;
+      mixMood(foamMaterial.uniforms.foamColor.value, dayFog, duskCloud, dayHemi);
+      mixMood(water.material.uniforms.sunColor.value, daySun, duskSun, nightSun).multiplyScalar(1 - overcast * .45);
       water.material.uniforms.sunDirection.value.copy(sunDirection);
       mixMood(water.material.uniforms.waterColor.value, dayWater, duskWater, nightWater);
-      water.material.uniforms.distortionScale.value = 1.25 + rain * .9;
-      stars.material.opacity = night * .9 * (1 - rain);
-      fireflies.material.opacity = (night + dusk * .35) * (.6 + Math.sin(elapsed * .6) * .18) * (1 - rain * .6);
+      water.material.uniforms.distortionScale.value = 2.05 + rain * .9;
+      stars.material.opacity = night * .9 * (1 - overcast);
+      fireflies.material.opacity = (night + dusk * .35) * (.6 + Math.sin(elapsed * .6) * .18) * (1 - overcast * .8);
       const fp = fireflyGeometry.attributes.position;
       for (let i = 0; i < fp.count; i++) { fp.setX(i, fireflyPositions[i * 3] + Math.sin(elapsed * .24 + i) * .8); fp.setY(i, fireflyPositions[i * 3 + 1] + Math.sin(elapsed * .4 + i * 2) * .4); }
       fp.needsUpdate = true;
       clouds.forEach((c) => {
         c.position.x = ((c.userData.startX + elapsed * c.userData.speed + 220) % 440) - 220;
-        mixMood(c.material.color, dayCloud, duskCloud, nightCloud).lerp(rainCloud, rain * .3);
-        c.material.opacity = .55 + rain * .25;
+        mixMood(c.material.color, dayCloud, duskCloud, nightCloud).lerp(rainCloud, overcast * .3);
+        c.material.opacity = .55 + overcast * .25;
       });
-      mists.forEach((m, i) => { m.position.x = Math.sin(elapsed * .015 + i) * 35; m.material.opacity = .13 - night * .05 + rain * .12; mixMood(m.material.color, dayFog, duskFog, nightFog); });
+      mists.forEach((m, i) => { m.position.x = Math.sin(elapsed * .015 + i) * 35; m.material.opacity = .13 - night * .05 + overcast * .12; mixMood(m.material.color, dayFog, duskFog, nightFog); });
       for (let i = 0; i < birdCount; i++) {
         const x = ((elapsed * 1.3 + i * 3.4 + 90) % 235) - 125;
         const y = 56 + Math.sin(elapsed * .14 + i * .45) * 2.2 + Math.abs(i - 3) * 1.1;
@@ -353,7 +376,7 @@ export function createScene(container, initialNight, onFailure) {
         birdPositions[j + 6] = x; birdPositions[j + 7] = y; birdPositions[j + 8] = z + .18;
         birdPositions[j + 9] = x + .72; birdPositions[j + 10] = y + wing; birdPositions[j + 11] = z;
       }
-      birdGeometry.attributes.position.needsUpdate = true; birdMaterial.opacity = .65 * (1 - night) * (1 - rain);
+      birdGeometry.attributes.position.needsUpdate = true; birdMaterial.opacity = .65 * (1 - night) * (1 - overcast);
       rainfall.visible = rain > .001; rainMaterial.opacity = rain * (.30 - night * .09);
       if (rainfall.visible) {
         for (let i = 0; i < dropCount; i++) {
@@ -413,7 +436,7 @@ export function createScene(container, initialNight, onFailure) {
         targetDusk = value === 'sunset' ? 1 : 0;
         scene.userData.needsRender = true;
       },
-      setWeather(value) { targetRain = value === 'rain' ? 1 : 0; scene.userData.needsRender = true; },
+      setWeather(value) { targetRain = value === 'rain' ? 1 : 0; targetSnow = value === 'snow' ? 1 : 0; scene.userData.needsRender = true; },
       dispose: disposeScene,
     };
   } catch (error) {

@@ -38,5 +38,6 @@ export function NatureScene({ mood = 'day', weather = 'clear' }) {
   return <div className={`nature-scene${ready ? ' is-ready' : ''}${failed ? ' is-fallback' : ''}`} aria-hidden="true">
     {!ready && <Landscape />}
     <div className="three-canvas" ref={container} />
+    {!ready && weather === 'snow' && <div className="fallback-snow">{Array.from({ length: 36 }, (_, i) => <span key={i} style={{ left: ((i * 37) % 100) + '%', animationDuration: (9 + i % 7) + 's', animationDelay: -(i % 13) + 's', opacity: .35 + (i % 5) * .12, scale: .45 + (i % 4) * .25 }} />)}</div> }
   </div>;
 }

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Play, Pause, RotateCcw, Check, X, Sun, Sunset, Moon, Volume2, VolumeX, CloudRain, Eye, EyeOff, Maximize, Minimize, Timer, SlidersHorizontal } from 'lucide-react';
+import { Play, Pause, RotateCcw, Check, X, Sun, Sunset, Moon, Volume2, VolumeX, CloudRain, Snowflake, Repeat2, Eye, EyeOff, Maximize, Minimize, Timer, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 import { NatureScene } from './NatureScene';
 import { useAmbientAudio } from './hooks/useAmbientAudio';
+import { useSceneCycle, MOOD_CYCLE, WEATHER_CYCLE, MOOD_INTERVAL, WEATHER_INTERVAL } from './hooks/useSceneCycle';
 import './style.css';
 
 const STORAGE_KEY = 'webchill:preferences:v1';
@@ -11,11 +12,13 @@ function readPreferences() {
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
     return {
       mood: ['day', 'sunset', 'night'].includes(value.mood) ? value.mood : 'day',
-      weather: value.weather === 'rain' ? 'rain' : 'clear',
+      weather: ['clear', 'rain', 'snow'].includes(value.weather) ? value.weather : 'clear',
+      autoMood: value.autoMood === true,
+      autoWeather: value.autoWeather === true,
       volume: Number.isFinite(value.volume) ? Math.min(100, Math.max(0, value.volume)) : 35,
       minutes: Number.isInteger(value.minutes) && value.minutes >= 1 && value.minutes <= 180 ? value.minutes : 25,
     };
-  } catch { return { mood: 'day', weather: 'clear', volume: 35, minutes: 25 }; }
+  } catch { return { mood: 'day', weather: 'clear', autoMood: false, autoWeather: false, volume: 35, minutes: 25 }; }
 }
 const preferences = readPreferences();
 const MOODS = [{ id: 'day', label: 'Ban ngày', icon: Sun }, { id: 'sunset', label: 'Hoàng hôn', icon: Sunset }, { id: 'night', label: 'Ban đêm', icon: Moon }];
@@ -32,9 +35,14 @@ function App() {
   const [complete, setComplete] = useState(false);
   const [mood, setMood] = useState(preferences.mood);
   const [weather, setWeather] = useState(preferences.weather);
+  const [autoMood, setAutoMood] = useState(preferences.autoMood);
+  const [autoWeather, setAutoWeather] = useState(preferences.autoWeather);
+  useSceneCycle(autoMood, MOOD_CYCLE, MOOD_INTERVAL, setMood);
+  useSceneCycle(autoWeather, WEATHER_CYCLE, WEATHER_INTERVAL, setWeather);
   const [muted, setMuted] = useState(true);
   const [volume, setVolume] = useState(preferences.volume);
   const [immersed, setImmersed] = useState(false);
+  const [timerCollapsed, setTimerCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [custom, setCustom] = useState(false);
   const [customMinutes, setCustomMinutes] = useState(String(preferences.minutes));
@@ -47,8 +55,8 @@ function App() {
   chimeRef.current = sound.chime;
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ mood, weather, volume, minutes })); } catch { /* Preferences are optional when storage is disabled. */ }
-  }, [mood, weather, volume, minutes]);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ mood, weather, autoMood, autoWeather, volume, minutes })); } catch { /* Preferences are optional when storage is disabled. */ }
+  }, [mood, weather, autoMood, autoWeather, volume, minutes]);
 
   const finishSession = useCallback(() => {
     setRemaining(0); setRunning(false); setComplete(true);
@@ -122,7 +130,7 @@ function App() {
     document.title = running ? digits + ' · Lặng' : complete ? 'Hết giờ · Lặng' : 'Lặng — Một chút bình yên';
   }, [digits, running, complete]);
 
-  return <main className={'app ' + mood + (immersed ? ' is-immersed' : '') + (weather === 'rain' ? ' is-raining' : '')}>
+  return <main className={'app ' + mood + (immersed ? ' is-immersed' : '') + (weather === 'rain' ? ' is-raining' : weather === 'snow' ? ' is-snowing' : '')}>
     <NatureScene mood={mood} weather={weather} />
     <div className="scene-shade" />
     <div className="screen-actions" role="group" aria-label="Hiển thị">
@@ -131,8 +139,8 @@ function App() {
     </div>
 
     <section className="content" inert={immersed} aria-label="Hẹn giờ">
-      <div className={'timer-card' + (running ? ' is-running' : '') + (complete ? ' is-complete' : '')}>
-        <div className="timer-heading"><span><Timer size={14} /> ĐẾM NGƯỢC</span><span className={'status-dot' + (running ? ' pulse' : '')} /></div>
+      <div className={'timer-card' + (running ? ' is-running' : '') + (complete ? ' is-complete' : '') + (timerCollapsed ? ' is-collapsed' : '')}>
+        <div className="timer-heading"><span><Timer size={14} /> ĐẾM NGƯỢC</span><div className="timer-heading-controls"><span className={'status-dot' + (running ? ' pulse' : '')} /><IconButton className="timer-collapse" label={timerCollapsed ? 'Mở rộng bảng đếm ngược' : 'Thu gọn bảng đếm ngược'} aria-expanded={!timerCollapsed} onClick={() => setTimerCollapsed((value) => !value)}>{timerCollapsed ? <ChevronUp size={17}/> : <ChevronDown size={17}/>}</IconButton></div></div>
         <div className="timer-dial">
           <svg className="dial-ring" viewBox="0 0 200 200" aria-hidden="true">
             <defs><linearGradient id="timer-gradient" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#f4dfae"/><stop offset="1" stopColor="#a5cdb3"/></linearGradient></defs>
@@ -146,16 +154,20 @@ function App() {
           {[5, 15, 25, 45].map((value) => <button key={value} type="button" className={minutes === value ? 'selected' : ''} aria-pressed={minutes === value} onClick={() => choose(value)}>{value}<span> phút</span></button>)}
           <button type="button" className={![5, 15, 25, 45].includes(minutes) ? 'selected custom-preset' : 'custom-preset'} aria-label="Tùy chỉnh thời gian" title="Tùy chỉnh thời gian" onClick={() => { setCustomMinutes(String(minutes)); setCustom(true); }}><SlidersHorizontal size={14}/></button>
         </div>
-        <div className="timer-actions"><button className="start" onClick={toggleTimer}>{running ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}{running ? 'Tạm dừng' : remaining < minutes * 60 && remaining > 0 ? 'Tiếp tục' : complete ? 'Bắt đầu lại' : 'Bắt đầu'}</button><IconButton label="Đặt lại bộ đếm" className="reset" onClick={() => choose(minutes)}><RotateCcw size={17}/></IconButton></div>
+        <div className="timer-actions"><button className="start" aria-label={running ? 'Tạm dừng' : remaining < minutes * 60 && remaining > 0 ? 'Tiếp tục' : complete ? 'Bắt đầu lại' : 'Bắt đầu'} onClick={toggleTimer}>{running ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}<span>{running ? 'Tạm dừng' : remaining < minutes * 60 && remaining > 0 ? 'Tiếp tục' : complete ? 'Bắt đầu lại' : 'Bắt đầu'}</span></button><IconButton label="Đặt lại bộ đếm" className="reset" onClick={() => choose(minutes)}><RotateCcw size={17}/></IconButton></div>
       </div>
     </section>
 
     <div className="scene-controls" role="group" aria-label="Điều khiển phong cảnh" inert={immersed}>
       <div className="audio-group"><IconButton label={muted ? 'Bật âm thanh (M)' : 'Tắt âm thanh (M)'} active={!muted} disabled={sound.busy} onClick={sound.toggleAudio}>{muted || volume === 0 ? <VolumeX size={18}/> : <Volume2 size={18}/>}</IconButton><input className="volume-slider" type="range" min="0" max="100" step="1" value={volume} onChange={(e) => setVolume(Number(e.target.value))} aria-label="Âm lượng" aria-valuetext={volume + '%'} title={'Âm lượng: ' + volume + '%'} style={{ '--volume': volume + '%' }}/><output className="volume-value" aria-hidden="true">{volume}<span>%</span></output></div>
       <span className="control-divider" />
-      <div className="mood-group" role="group" aria-label="Ánh sáng">{MOODS.map(({ id, label, icon: Icon }) => <IconButton key={id} label={label} active={mood === id} onClick={() => setMood(id)}><Icon size={18}/></IconButton>)}</div>
+      <div className="mood-group" role="group" aria-label="Ánh sáng">{MOODS.map(({ id, label, icon: Icon }) => <IconButton key={id} label={label} active={mood === id} onClick={() => { setAutoMood(false); setMood(id); }}><Icon size={18}/></IconButton>)}<IconButton className="auto-button" label={autoMood ? 'Tắt tự chuyển buổi (mỗi 2 phút)' : 'Tự chuyển buổi (mỗi 2 phút)'} active={autoMood} onClick={() => setAutoMood(!autoMood)}><Repeat2 size={17}/></IconButton></div>
       <span className="control-divider weather-divider" />
-      <IconButton label={weather === 'rain' ? 'Tắt mưa' : 'Bật mưa nhẹ'} active={weather === 'rain'} onClick={() => setWeather(weather === 'rain' ? 'clear' : 'rain')}><CloudRain size={18}/></IconButton>
+      <div className="weather-group" role="group" aria-label="Thời tiết">
+        <IconButton label={weather === 'rain' ? 'Tắt mưa' : 'Bật mưa nhẹ'} active={weather === 'rain'} onClick={() => { setAutoWeather(false); setWeather(weather === 'rain' ? 'clear' : 'rain'); }}><CloudRain size={18}/></IconButton>
+        <IconButton label={weather === 'snow' ? 'Tắt tuyết' : 'Bật tuyết rơi'} active={weather === 'snow'} onClick={() => { setAutoWeather(false); setWeather(weather === 'snow' ? 'clear' : 'snow'); }}><Snowflake size={18}/></IconButton>
+        <IconButton className="auto-button" label={autoWeather ? 'Tắt tự chuyển thời tiết (mỗi 3 phút)' : 'Tự chuyển thời tiết (mỗi 3 phút)'} active={autoWeather} onClick={() => setAutoWeather(!autoWeather)}><Repeat2 size={17}/></IconButton>
+      </div>
     </div>
 
     {(notice || sound.error) && <div className="toast" role="status">{notice || sound.error}<IconButton label="Đóng thông báo" onClick={() => { setNotice(''); sound.clearError(); }}><X size={16}/></IconButton></div>}
