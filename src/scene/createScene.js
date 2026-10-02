@@ -3,16 +3,26 @@ import { Water } from 'three/addons/objects/Water.js';
 import { groundHeight, noise, random, riverCenter, riverWidth } from './terrain';
 import { createVegetation } from './createVegetation';
 import { createSnow } from './createSnow';
+import { createLandscapeDetails } from './createLandscapeDetails';
+import { createSkyDetails } from './createSkyDetails';
+import { createAtmosphere } from './createAtmosphere';
+import { createRiverEffects } from './createRiverEffects';
+import { createWildlife } from './createWildlife';
+import { createAdaptiveQuality, QUALITY_PROFILES } from './adaptiveQuality';
 
 export function createScene(container, initialNight, onFailure) {
   const rand = random();
   const mobile = container.clientWidth < 760;
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: mobile ? 'low-power' : 'high-performance' });
   const initializationCleanup = [];
   try {
+    renderer.debug.onShaderError = (gl, program, vertexShader, fragmentShader) => {
+      const info = [gl.getProgramInfoLog(program), gl.getShaderInfoLog(vertexShader), gl.getShaderInfoLog(fragmentShader)].filter(Boolean).join('\n');
+      throw new Error('Landscape shader compilation failed: ' + info);
+    };
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, mobile ? 1.35 : 1.75));
     renderer.shadowMap.enabled = !mobile;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -30,7 +40,10 @@ export function createScene(container, initialNight, onFailure) {
     const dummy = new THREE.Object3D();
     const textures = [];
     const color = new THREE.Color();
-    let disposed = false, frame = 0, previous = 0, elapsed = 0;
+    let disposed = false, frame = 0, previous = 0, elapsed = 0, nextRenderAt = 0, lastRenderedAt = 0;
+    const qualityControl = createAdaptiveQuality();
+    let qualityProfile = QUALITY_PROFILES.high;
+    let refreshReflection = true, reflectionFrame = 0;
     let targetNight = initialNight ? 1 : 0, night = targetNight;
     let targetDusk = 0, dusk = 0, targetRain = 0, rain = 0, targetSnow = 0, snow = 0, lastShadowUpdate = -1;
     const sunDirection = new THREE.Vector3(-48, 105, -250).normalize();
@@ -63,6 +76,8 @@ export function createScene(container, initialNight, onFailure) {
           float halo=pow(max(dot(direction,sunDirection),0.),18.);
           vec3 col=mix(mix(day,evening,dusk),dark,night);
           col+=mix(vec3(.24,.13,.04),vec3(.42,.16,.035),dusk)*halo*(1.-night)*(1.-rain*.8);
+          float horizonHaze=pow(1.0-abs(direction.y),8.0);
+          col+=mix(vec3(.065,.038,.012),vec3(.015,.025,.045),night)*horizonHaze*(1.0-rain*.6);
           col=mix(col,mix(vec3(.32,.42,.46),vec3(.045,.075,.13),night),rain*.62);
           gl_FragColor=vec4(col,1.);
           #include <tonemapping_fragment>
@@ -116,6 +131,7 @@ export function createScene(container, initialNight, onFailure) {
     const ground = new THREE.Mesh(groundGeometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }));
     ground.receiveShadow = true; scene.add(ground);
 
+    const mountains = [];
     for (let layer = 0; layer < 3; layer++) {
       const geometry = new THREE.PlaneGeometry(570, 95, 130, 28);
       geometry.rotateX(-Math.PI / 2); geometry.translate(0, 0, -155 - layer * 68);
@@ -129,7 +145,7 @@ export function createScene(container, initialNight, onFailure) {
       }
       geometry.computeVertexNormals();
       const mountain = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: ['#5c7e71', '#77948c', '#8da6a0'][layer], roughness: 1, flatShading: true }));
-      scene.add(mountain);
+      mountains.push(mountain); scene.add(mountain);
     }
 
     // Real planar reflection; the normal map is generated locally, with no asset request.
@@ -146,26 +162,47 @@ export function createScene(container, initialNight, onFailure) {
     normalTexture.magFilter = normalTexture.minFilter = THREE.LinearFilter;
     normalTexture.needsUpdate = true; textures.push(normalTexture);
     const water = new Water(new THREE.PlaneGeometry(350, 410), {
-      textureWidth: mobile ? 256 : 512, textureHeight: mobile ? 256 : 512,
+      textureWidth: mobile ? 256 : 1024, textureHeight: mobile ? 256 : 1024,
       waterNormals: normalTexture, sunDirection: new THREE.Vector3(.4, .6, -.5).normalize(),
       sunColor: '#ffe6b4', waterColor: '#27796d', distortionScale: 1.25, fog: true,
     });
+    const reflectionTarget = water.material.uniforms.mirrorSampler.value.renderTarget;
+    initializationCleanup.push(() => reflectionTarget.dispose());
     water.rotation.x = -Math.PI / 2; water.position.set(0, .02, -108);
     water.material.uniforms.size.value = 5;
     water.receiveShadow = true;
     // Advect the normal field down the winding channel, in addition to local ripples.
     water.material.uniforms.flowTime = { value: 0 };
-    water.material.fragmentShader = 'uniform float flowTime;\n' + water.material.fragmentShader;
+    water.material.uniforms.shallowColor = { value: new THREE.Color('#65a493') };
+    water.material.fragmentShader = 'uniform float flowTime; uniform vec3 shallowColor;\n' + water.material.fragmentShader;
     water.material.fragmentShader = water.material.fragmentShader.replace(
       'vec4 noise = getNoise( worldPosition.xz * size );',
       'float channel = 5.0 + sin(worldPosition.z * .035) * 11.0 + sin(worldPosition.z * .074) * 2.0;\nvec2 downstreamUv = vec2(worldPosition.x - channel, worldPosition.z - flowTime * 4.2);\nvec4 noise = getNoise(downstreamUv * size);'
     );
+    water.material.fragmentShader = water.material.fragmentShader.replace('vec3 outgoingLight = albedo;', `
+      float detailChannelWidth = 5.2 + sin(worldPosition.z * .024 + 1.0) * 1.5 + max(0.0, worldPosition.z + 8.0) * .042;
+      float detailShore = smoothstep(detailChannelWidth * .54, detailChannelWidth * 1.02, abs(worldPosition.x - channel));
+      vec3 detailShallowLight = shallowColor * (.34 + diffuseLight * .22) + reflectionSample * .13;
+      albedo = mix(albedo, detailShallowLight, detailShore * .40);
+      float detailCaustic = pow(abs(sin(downstreamUv.x * 3.7 + sin(downstreamUv.y * 2.1)) * sin(downstreamUv.y * 3.3)), 12.0);
+      albedo += shallowColor * detailCaustic * detailShore * .09;
+      vec3 outgoingLight = albedo;
+    `);
     scene.add(water);
+    const renderReflection = water.onBeforeRender;
+    water.onBeforeRender = function (...args) {
+      // Reuse the reflection between updates on slower devices; surface ripples
+      // still animate every frame. Resize and setting changes force a refresh.
+      if (mobile || refreshReflection || reflectionFrame++ % qualityProfile.reflectionInterval === 0) {
+        renderReflection.apply(this, args);
+        refreshReflection = false;
+      } else water.material.uniforms.eye.value.setFromMatrixPosition(args[2].matrixWorld);
+    };
 
     // One curved strip carries broken foam trails and quick ripples downstream.
     const foamPositions = [], foamUvs = [], foamIndices = [], foamSegments = 150;
     for (let i = 0; i <= foamSegments; i++) {
-      const z = -170 + i / foamSegments * 255, center = riverCenter(z), width = riverWidth(z) * .89;
+      const z = -170 + i / foamSegments * 255, center = riverCenter(z), width = riverWidth(z) * 1.02;
       foamPositions.push(center - width, .075, z, center + width, .075, z);
       foamUvs.push(-1, z, 1, z);
       if (i < foamSegments) { const a = i * 2; foamIndices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
@@ -202,8 +239,10 @@ export function createScene(container, initialNight, onFailure) {
           streak *= smoothstep(.82, .97, seed);
           float riffle = pow(max(0.0, sin(downstream * 3.8 + sin(flowUv.x * 18.0) * 1.7)), 22.0);
           riffle *= smoothstep(.3, .9, sin(downstream * .36 + flowUv.x * 24.0) * .5 + .5) * .12;
-          float bankFade = 1.0 - smoothstep(.7, 1.0, abs(flowUv.x));
-          float alpha = (streak * .66 + riffle) * bankFade * brightness;
+          float bankFade = 1.0 - smoothstep(.93, 1.0, abs(flowUv.x));
+          float shoreline = exp(-pow((abs(flowUv.x) - .90) / .045, 2.0));
+          shoreline *= smoothstep(.3, .85, sin(downstream * 1.2 + sin(downstream * .43) * 2.0) * .5 + .5);
+          float alpha = (streak * .66 + riffle + shoreline * .21) * bankFade * brightness;
           if (alpha < .007) discard;
           gl_FragColor = vec4(foamColor, alpha);
           #include <tonemapping_fragment>
@@ -216,18 +255,12 @@ export function createScene(container, initialNight, onFailure) {
     const vegetation = createVegetation(scene, { mobile, rand, groundHeight, riverCenter, riverWidth });
     initializationCleanup.push(() => vegetation.dispose());
 
-    // Rounded river stones anchor the stream in the foreground.
-    const stoneGeometry = new THREE.IcosahedronGeometry(1, 1);
-    const stones = new THREE.InstancedMesh(stoneGeometry, new THREE.MeshStandardMaterial({ color: '#98a08a', roughness: .93, flatShading: true }), 180);
-    for (let i = 0; i < 180; i++) {
-      const z = 70 - rand() * 240, side = rand() > .5 ? 1 : -1;
-      const x = riverCenter(z) + side * (riverWidth(z) + rand() * 2.4 - .5);
-      const scale = .25 + rand() * 1.2;
-      dummy.position.set(x, groundHeight(x, z) + scale * .12, z); dummy.rotation.set(rand(), rand() * 6, rand());
-      dummy.scale.set(scale * 1.6, scale * .65, scale); dummy.updateMatrix(); stones.setMatrixAt(i, dummy.matrix);
-      stones.setColorAt(i, color.setHSL(.15 + rand() * .05, .09, .32 + rand() * .2));
-    }
-    stones.castShadow = !mobile; stones.receiveShadow = true; scene.add(stones);
+    const landscapeDetails = createLandscapeDetails(scene, { mobile, rand, ground, mountains });
+    initializationCleanup.push(() => landscapeDetails.dispose());
+    const riverEffects = createRiverEffects(scene, { mobile, rand: random(7123), obstacles: landscapeDetails.riverObstacles });
+    const atmosphere = createAtmosphere(scene, { mobile, rand: random(4381) });
+    const wildlife = createWildlife(scene, { mobile, rand: random(9067) });
+    initializationCleanup.push(() => riverEffects.dispose(), () => atmosphere.dispose(), () => wildlife.dispose());
 
     // Sparse flowers and reeds add a detailed foreground without filling the valley.
     const flowerCount = mobile ? 100 : 220;
@@ -275,7 +308,7 @@ export function createScene(container, initialNight, onFailure) {
     const mists = [];
     for (let i = 0; i < 7; i++) {
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: cloudMap, color: '#d8e3cb', opacity: .15, transparent: true, depthWrite: false }));
-      sprite.position.set((rand() - .5) * 120, 10 + rand() * 6, -35 - i * 22); sprite.scale.set(110, 12, 1);
+      sprite.position.set((rand() - .5) * 120, 5 + rand() * 6, -35 - i * 22); sprite.scale.set(85 + rand() * 45, 6 + rand() * 6, 1);
       mists.push(sprite); scene.add(sprite);
     }
 
@@ -286,6 +319,8 @@ export function createScene(container, initialNight, onFailure) {
     }
     const starGeometry = new THREE.BufferGeometry(); starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
     const stars = new THREE.Points(starGeometry, new THREE.PointsMaterial({ color: '#d8ecff', size: .8, transparent: true, opacity: 0, depthWrite: false, fog: false })); scene.add(stars);
+    const skyDetails = createSkyDetails({ sunMaterial, stars, rand });
+    initializationCleanup.push(() => skyDetails.dispose());
     const fireflyPositions = [];
     for (let i = 0; i < 65; i++) { const z = 30 - rand() * 110, x = riverCenter(z) + (rand() - .5) * 32; fireflyPositions.push(x, Math.max(.8, groundHeight(x, z)) + 1 + rand() * 4, z); }
     const fireflyGeometry = new THREE.BufferGeometry(); fireflyGeometry.setAttribute('position', new THREE.Float32BufferAttribute(fireflyPositions, 3));
@@ -296,6 +331,7 @@ export function createScene(container, initialNight, onFailure) {
     const dayHemi = new THREE.Color('#e2f1eb'), nightHemi = new THREE.Color('#6d8dba');
     const dayWater = new THREE.Color('#27796d'), nightWater = new THREE.Color('#0c293a');
     const dayCloud = new THREE.Color('#fff6de'), nightCloud = new THREE.Color('#677c9a');
+    const dayShallow = new THREE.Color('#65a493'), duskShallow = new THREE.Color('#929d85'), nightShallow = new THREE.Color('#244b5c');
     const dayDisk = new THREE.Color('#fff4cf'), nightDisk = new THREE.Color('#e3eeff');
     const duskFog = new THREE.Color('#b69986'), duskSun = new THREE.Color('#ffad69');
     const duskHemi = new THREE.Color('#c5b8c7'), duskWater = new THREE.Color('#557e75');
@@ -304,6 +340,26 @@ export function createScene(container, initialNight, onFailure) {
     const currentRainFog = new THREE.Color();
     const snowFog = new THREE.Color('#ccdcdf'), darkSnowFog = new THREE.Color('#263d51'), currentSnowFog = new THREE.Color();
     const mixMood = (destination, day, sunset, dark) => destination.copy(day).lerp(sunset, dusk).lerp(dark, night);
+
+    function applyQuality(level) {
+      qualityProfile = QUALITY_PROFILES[level];
+      renderer.domElement.dataset.graphicsQuality = mobile ? 'mobile' : level;
+      if (mobile) return;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualityProfile.pixelRatio));
+      reflectionTarget.setSize(qualityProfile.reflectionSize, qualityProfile.reflectionSize);
+      if (sunlight.shadow.mapSize.x !== qualityProfile.shadowSize) {
+        sunlight.shadow.map?.dispose(); sunlight.shadow.map = null;
+        sunlight.shadow.mapSize.setScalar(qualityProfile.shadowSize);
+      }
+      vegetation.setQuality(level);
+      atmosphere.setQuality(level);
+      riverEffects.setQuality(level);
+      wildlife.setQuality(level);
+      renderer.shadowMap.needsUpdate = true;
+      refreshReflection = true;
+      scene.userData.needsRender = true;
+    }
+    applyQuality(qualityControl.level);
 
     function render(now = 0) {
       try { renderFrame(now); } catch (error) {
@@ -314,12 +370,15 @@ export function createScene(container, initialNight, onFailure) {
     function renderFrame(now = 0) {
       if (disposed) return;
       frame = requestAnimationFrame(render);
-      if (document.hidden) { previous = now; return; }
-      // Cap animation at 40 fps (30 on small screens); a static reduced-motion scene still updates controls.
-      if (now - previous < (mobile ? 33 : 25)) return;
-      const dt = Math.min((now - previous) / 1000, .08); previous = now;
+      if (document.hidden) { resetFrameTiming(); return; }
+      // Keep a steady 60 fps target on desktop, with a 30 fps mobile fallback.
+      // Carry the scheduling remainder so 60 Hz screens do not accidentally halve the rate.
+      const frameInterval = 1000 / (mobile ? 30 : 60);
+      if (now + .5 < nextRenderAt) return;
+      nextRenderAt = now + frameInterval - Math.max(0, now - nextRenderAt) % frameInterval;
+      const dt = previous ? Math.min((now - previous) / 1000, .08) : frameInterval / 1000; previous = now;
       const changing = Math.abs(targetNight - night) > .001 || Math.abs(targetDusk - dusk) > .001 || Math.abs(targetRain - rain) > .001 || Math.abs(targetSnow - snow) > .001;
-      if (reducedMotion.matches && !changing && !scene.userData.needsRender) return;
+      if (reducedMotion.matches && !changing && !scene.userData.needsRender) { lastRenderedAt = 0; return; }
       if (!reducedMotion.matches) elapsed += dt;
       night = reducedMotion.matches ? targetNight : THREE.MathUtils.damp(night, targetNight, 1.6, dt);
       dusk = reducedMotion.matches ? targetDusk : THREE.MathUtils.damp(dusk, targetDusk, 1.6, dt);
@@ -327,6 +386,10 @@ export function createScene(container, initialNight, onFailure) {
       snow = reducedMotion.matches ? targetSnow : THREE.MathUtils.damp(snow, targetSnow, 1.2, dt);
       const overcast = Math.min(1, rain + snow * .68);
       vegetation.update(elapsed, reducedMotion.matches, rain, snow);
+      landscapeDetails.update(rain, snow);
+      skyDetails.update(elapsed, night);
+      riverEffects.update({ time: elapsed, rain, night, dusk, snow, reducedMotion: reducedMotion.matches });
+      wildlife.update({ time: elapsed, rain, night, dusk, snow, reducedMotion: reducedMotion.matches });
       snowfall.update({ time: elapsed, intensity: snow, reducedMotion: reducedMotion.matches });
       skyMaterial.uniforms.night.value = night;
       skyMaterial.uniforms.dusk.value = dusk;
@@ -340,12 +403,13 @@ export function createScene(container, initialNight, onFailure) {
       sun.position.set(-48 + dusk * 15, 105 - dusk * 38, -250); sun.scale.setScalar(1 - night * .22 + dusk * .16);
       sun.visible = overcast < .97;
       sunDirection.copy(sun.position).normalize();
+      atmosphere.update({ time: elapsed, night, dusk, rain, snow, reducedMotion: reducedMotion.matches, sunDirection, camera });
       sunlight.position.set(sun.position.x * .5, sun.position.y * .78, sun.position.z * .5);
-      halo.position.copy(sun.position);
+      halo.position.copy(sun.position); halo.scale.setScalar(105 + dusk * 26);
       mixMood(haloMaterial.color, daySun, duskSun, nightDisk); haloMaterial.opacity = (.6 - night * .35 + dusk * .12) * (1 - overcast * .9);
       // Wind uses the same deformation in the depth pass; refresh shadows at a modest cadence.
       if (!mobile && scene.userData.needsRender) renderer.shadowMap.needsUpdate = true;
-      if (!mobile && (changing || !reducedMotion.matches) && now - lastShadowUpdate > 180) { renderer.shadowMap.needsUpdate = true; lastShadowUpdate = now; }
+      if (!mobile && (changing || !reducedMotion.matches) && now - lastShadowUpdate > qualityProfile.shadowInterval) { renderer.shadowMap.needsUpdate = true; lastShadowUpdate = now; }
       water.material.uniforms.time.value = elapsed * 1.05;
       water.material.uniforms.flowTime.value = elapsed;
       foamMaterial.uniforms.flowTime.value = elapsed;
@@ -354,6 +418,7 @@ export function createScene(container, initialNight, onFailure) {
       mixMood(water.material.uniforms.sunColor.value, daySun, duskSun, nightSun).multiplyScalar(1 - overcast * .45);
       water.material.uniforms.sunDirection.value.copy(sunDirection);
       mixMood(water.material.uniforms.waterColor.value, dayWater, duskWater, nightWater);
+      mixMood(water.material.uniforms.shallowColor.value, dayShallow, duskShallow, nightShallow).multiplyScalar(1 - overcast * .18);
       water.material.uniforms.distortionScale.value = 2.05 + rain * .9;
       stars.material.opacity = night * .9 * (1 - overcast);
       fireflies.material.opacity = (night + dusk * .35) * (.6 + Math.sin(elapsed * .6) * .18) * (1 - overcast * .8);
@@ -365,7 +430,7 @@ export function createScene(container, initialNight, onFailure) {
         mixMood(c.material.color, dayCloud, duskCloud, nightCloud).lerp(rainCloud, overcast * .3);
         c.material.opacity = .55 + overcast * .25;
       });
-      mists.forEach((m, i) => { m.position.x = Math.sin(elapsed * .015 + i) * 35; m.material.opacity = .13 - night * .05 + overcast * .12; mixMood(m.material.color, dayFog, duskFog, nightFog); });
+      mists.forEach((m, i) => { m.position.x = Math.sin(elapsed * .015 + i) * 35; m.material.opacity = (.13 - night * .05 + overcast * .12) * (mobile ? 1 : .4); mixMood(m.material.color, dayFog, duskFog, nightFog); });
       for (let i = 0; i < birdCount; i++) {
         const x = ((elapsed * 1.3 + i * 3.4 + 90) % 235) - 125;
         const y = 56 + Math.sin(elapsed * .14 + i * .45) * 2.2 + Math.abs(i - 3) * 1.1;
@@ -393,8 +458,21 @@ export function createScene(container, initialNight, onFailure) {
       camera.position.y = THREE.MathUtils.damp(camera.position.y, baseCamera.y + py * .4, 1.5, dt);
       camera.lookAt(lookAt);
       if (!reducedMotion.matches || changing || scene.userData.needsRender) {
+        if (scene.userData.needsRender || changing) refreshReflection = true;
         renderer.render(scene, camera); scene.userData.needsRender = false;
+        if (!mobile && !reducedMotion.matches && lastRenderedAt) {
+          const nextQuality = qualityControl.sample(now - lastRenderedAt);
+          if (nextQuality) applyQuality(nextQuality);
+        }
+        lastRenderedAt = reducedMotion.matches ? 0 : now;
       }
+    }
+    function resetFrameTiming() {
+      previous = 0; nextRenderAt = 0; lastRenderedAt = 0;
+      qualityControl.reset();
+    }
+    function resumeRendering() {
+      resetFrameTiming(); refreshReflection = true; scene.userData.needsRender = true;
     }
     function resize() {
       const width = container.clientWidth, height = container.clientHeight;
@@ -404,6 +482,7 @@ export function createScene(container, initialNight, onFailure) {
       lookAt.set(...(width < 760 ? [10, 15, -65] : [-2, 10, -62]));
       camera.position.copy(baseCamera);
       camera.updateProjectionMatrix(); renderer.setSize(width, height); scene.userData.needsRender = true;
+      resumeRendering();
     }
     function move(event) { pointer.set(event.clientX / window.innerWidth * 2 - 1, 1 - event.clientY / window.innerHeight * 2); }
     function resetPointer() { pointer.set(0, 0); }
@@ -411,10 +490,14 @@ export function createScene(container, initialNight, onFailure) {
     const resizeObserver = new ResizeObserver(resize); resizeObserver.observe(container);
     window.addEventListener('pointermove', move, { passive: true });
     document.documentElement.addEventListener('pointerleave', resetPointer);
+    document.addEventListener('visibilitychange', resumeRendering);
+    reducedMotion.addEventListener('change', resumeRendering);
     renderer.domElement.addEventListener('webglcontextlost', contextLost);
     initializationCleanup.push(() => {
       resizeObserver.disconnect(); window.removeEventListener('pointermove', move);
       document.documentElement.removeEventListener('pointerleave', resetPointer);
+      document.removeEventListener('visibilitychange', resumeRendering);
+      reducedMotion.removeEventListener('change', resumeRendering);
       renderer.domElement.removeEventListener('webglcontextlost', contextLost);
       cancelAnimationFrame(frame);
     });
@@ -425,7 +508,7 @@ export function createScene(container, initialNight, onFailure) {
       const geometries = new Set(), materials = new Set();
       scene.traverse((object) => { if (object.geometry) geometries.add(object.geometry); if (object.material) (Array.isArray(object.material) ? object.material : [object.material]).forEach((m) => materials.add(m)); });
       geometries.forEach((g) => g.dispose());
-      materials.forEach((m) => { m.uniforms?.mirrorSampler?.value?.dispose(); m.dispose(); });
+      materials.forEach((m) => m.dispose());
       textures.forEach((t) => t.dispose()); sunlight.shadow.map?.dispose(); renderer.dispose(); renderer.forceContextLoss();
       renderer.domElement.remove();
     }
