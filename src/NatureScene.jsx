@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Landscape } from './Landscape';
 
-export function NatureScene({ mood = 'day', weather = 'clear' }) {
+export const NatureScene = memo(function NatureScene({ mood = 'day', weather = 'clear', view = 'valley', drift = true, quality = 'auto' }) {
   const container = useRef(null);
   const scene = useRef(null);
-  const settings = useRef({ mood, weather });
+  const settings = useRef({ mood, weather, view, drift, quality });
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  settings.current = { mood, weather };
+  settings.current = { mood, weather, view, drift, quality };
 
   useEffect(() => {
     let cancelled = false;
@@ -19,14 +19,18 @@ export function NatureScene({ mood = 'day', weather = 'clear' }) {
     import('./scene/createScene').then(({ createScene }) => {
       if (cancelled) return;
       try {
-        const next = createScene(container.current, settings.current.mood === 'night', fail);
+        const next = createScene(container.current, settings.current.mood === 'night', fail, () => {
+          if (!cancelled) { setReady(true); setFailed(false); }
+        });
+        scene.current = next;
         next.setMood(settings.current.mood);
         next.setWeather(settings.current.weather);
-        scene.current = next;
-        setReady(true);
+        next.setView(settings.current.view);
+        next.setDrift(settings.current.drift);
+        next.setQuality(settings.current.quality);
       } catch (error) {
         console.warn('3D landscape unavailable; displaying the illustrated landscape.', error);
-        container.current?.replaceChildren(); setFailed(true);
+        fail(); container.current?.replaceChildren();
       }
     }).catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; scene.current?.dispose(); scene.current = null; };
@@ -34,10 +38,13 @@ export function NatureScene({ mood = 'day', weather = 'clear' }) {
 
   useEffect(() => { scene.current?.setMood(mood); }, [mood]);
   useEffect(() => { scene.current?.setWeather(weather); }, [weather]);
+  useEffect(() => { scene.current?.setView(view); }, [view]);
+  useEffect(() => { scene.current?.setDrift(drift); }, [drift]);
+  useEffect(() => { scene.current?.setQuality(quality); }, [quality]);
 
   return <div className={`nature-scene${ready ? ' is-ready' : ''}${failed ? ' is-fallback' : ''}`} aria-hidden="true">
-    {!ready && <Landscape />}
+    <div className="scene-fallback"><Landscape /></div>
     <div className="three-canvas" ref={container} />
     {!ready && weather === 'snow' && <div className="fallback-snow">{Array.from({ length: 36 }, (_, i) => <span key={i} style={{ left: ((i * 37) % 100) + '%', animationDuration: (9 + i % 7) + 's', animationDelay: -(i % 13) + 's', opacity: .35 + (i % 5) * .12, scale: .45 + (i % 4) * .25 }} />)}</div> }
   </div>;
-}
+});

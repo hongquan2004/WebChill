@@ -1,5 +1,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600&display=swap');
 
+.scene-fallback{position:absolute;inset:0;opacity:1;visibility:visible;transition:opacity .35s}
+.nature-scene.is-ready .scene-fallback{opacity:0;visibility:hidden;transition:opacity 1.6s,visibility 0s 1.6s}
+.nature-scene.is-ready .scene-fallback *{animation-play-state:paused}
+.nature-scene.is-fallback .scene-fallback{transition:none}
+@media(prefers-reduced-motion:reduce){.scene-fallback,.nature-scene.is-ready .scene-fallback{transition:none}}
+
 :root{font-family:'Be Vietnam Pro',sans-serif;font-synthesis:none;color-scheme:dark;color:#f5f4e9;background:#25463c;--accent:#ece3be;--muted:#dce5d4a6;--glass:linear-gradient(145deg,#1b3836c7,#1b343587);--line:#e8efdc2b;--toolbar:#193936a8}
 *{box-sizing:border-box}body{margin:0}button,input{-webkit-tap-highlight-color:transparent;font:inherit}button{cursor:pointer;transition:background .2s,transform .2s,color .2s,border-color .2s,box-shadow .2s}button:hover{transform:translateY(-1px)}button:active{transform:translateY(0)}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:5px}button:disabled{cursor:wait;opacity:.5}button svg{flex-shrink:0}.app{position:relative;min-height:100svh;isolation:isolate;display:flex;align-items:flex-end;padding:32px;overflow:hidden}.app.night{--accent:#d0e3ee;--glass:linear-gradient(145deg,#142535d4,#172c378f);--line:#bbd3ec2b;--toolbar:#132837b8}.app.sunset{--accent:#f3d5b2;--glass:linear-gradient(145deg,#493a36c9,#2e343585);--line:#f4d7b836;--toolbar:#423933ab}
 .nature-scene{position:fixed;inset:0;z-index:-3;background:#b9cdc1}.three-canvas{width:100%;height:100%;opacity:0;transition:opacity 1.6s}.three-canvas canvas{display:block;width:100%;height:100%}.nature-scene.is-ready .three-canvas{opacity:1}.landscape{position:absolute;inset:0;width:100%;height:100%;transition:filter 1.8s}.night .landscape{filter:brightness(.48) saturate(.65) hue-rotate(22deg)}.sunset .landscape{filter:sepia(.24) saturate(1.1) hue-rotate(-18deg) brightness(.92)}.is-raining .nature-scene.is-fallback{filter:brightness(.8) saturate(.8)}.scene-shade{position:fixed;inset:0;z-index:-2;pointer-events:none;background:linear-gradient(0deg,#142c304d,transparent 28%),radial-gradient(ellipse at 50% 38%,transparent 42%,#10272a24 100%)}

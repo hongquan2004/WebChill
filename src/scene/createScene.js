@@ -9,12 +9,32 @@ import { createAtmosphere } from './createAtmosphere';
 import { createRiverEffects } from './createRiverEffects';
 import { createWildlife } from './createWildlife';
 import { createAdaptiveQuality, QUALITY_PROFILES } from './adaptiveQuality';
+import { createCameraDirector } from './createCameraDirector';
 
-export function createScene(container, initialNight, onFailure) {
+export function createScene(container, initialNight, onFailure, onReady) {
   const rand = random();
   const mobile = container.clientWidth < 760;
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: mobile ? 'low-power' : 'high-performance' });
   const initializationCleanup = [];
+  const textures = [];
+  let scene, sunlight, disposed = false, frame = 0;
+  function disposeScene() {
+    if (disposed) return;
+    disposed = true;
+    cancelAnimationFrame(frame);
+    initializationCleanup.forEach((cleanup) => cleanup());
+    const geometries = new Set(), materials = new Set();
+    scene?.traverse((object) => {
+      if (object.isInstancedMesh) object.dispose();
+      if (object.geometry) geometries.add(object.geometry);
+      for (const material of [object.material, object.customDepthMaterial, object.customDistanceMaterial].flat().filter(Boolean)) materials.add(material);
+    });
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+    textures.forEach((texture) => texture.dispose());
+    sunlight?.shadow.map?.dispose();
+    renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
+  }
   try {
     renderer.debug.onShaderError = (gl, program, vertexShader, fragmentShader) => {
       const info = [gl.getProgramInfoLog(program), gl.getShaderInfoLog(vertexShader), gl.getShaderInfoLog(fragmentShader)].filter(Boolean).join('\n');
@@ -29,20 +49,19 @@ export function createScene(container, initialNight, onFailure) {
     renderer.toneMappingExposure = 1.13;
     renderer.domElement.setAttribute('aria-hidden', 'true');
     container.appendChild(renderer.domElement);
-    const scene = new THREE.Scene();
+    scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2('#c4d9cf', .0055);
     const camera = new THREE.PerspectiveCamera(48, 1, .2, 680);
-    const baseCamera = new THREE.Vector3(24, 15, 43);
-    camera.position.copy(baseCamera);
-    const lookAt = new THREE.Vector3(-2, 10, -62);
+    const cameraDirector = createCameraDirector(camera, { mobile, groundHeight });
+    initializationCleanup.push(() => cameraDirector.dispose());
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const pointer = new THREE.Vector2();
     const dummy = new THREE.Object3D();
-    const textures = [];
     const color = new THREE.Color();
-    let disposed = false, frame = 0, previous = 0, elapsed = 0, nextRenderAt = 0, lastRenderedAt = 0;
+    let previous = 0, elapsed = 0, nextRenderAt = 0, lastRenderedAt = 0, readyNotified = false;
     const qualityControl = createAdaptiveQuality();
     let qualityProfile = QUALITY_PROFILES.high;
+    let qualityMode = 'auto';
     let refreshReflection = true, reflectionFrame = 0;
     let targetNight = initialNight ? 1 : 0, night = targetNight;
     let targetDusk = 0, dusk = 0, targetRain = 0, rain = 0, targetSnow = 0, snow = 0, lastShadowUpdate = -1;
@@ -50,7 +69,7 @@ export function createScene(container, initialNight, onFailure) {
 
     const hemi = new THREE.HemisphereLight('#e2f1eb', '#3e5134', 2.4);
     scene.add(hemi);
-    const sunlight = new THREE.DirectionalLight('#ffdfad', 3.2);
+    sunlight = new THREE.DirectionalLight('#ffdfad', 3.2);
     sunlight.position.set(65, 85, -110);
     sunlight.target.position.set(0, 0, -22);
     sunlight.castShadow = !mobile;
@@ -258,9 +277,11 @@ export function createScene(container, initialNight, onFailure) {
     const landscapeDetails = createLandscapeDetails(scene, { mobile, rand, ground, mountains });
     initializationCleanup.push(() => landscapeDetails.dispose());
     const riverEffects = createRiverEffects(scene, { mobile, rand: random(7123), obstacles: landscapeDetails.riverObstacles });
+    initializationCleanup.push(() => riverEffects.dispose());
     const atmosphere = createAtmosphere(scene, { mobile, rand: random(4381) });
+    initializationCleanup.push(() => atmosphere.dispose());
     const wildlife = createWildlife(scene, { mobile, rand: random(9067) });
-    initializationCleanup.push(() => riverEffects.dispose(), () => atmosphere.dispose(), () => wildlife.dispose());
+    initializationCleanup.push(() => wildlife.dispose());
 
     // Sparse flowers and reeds add a detailed foreground without filling the valley.
     const flowerCount = mobile ? 100 : 220;
@@ -344,10 +365,11 @@ export function createScene(container, initialNight, onFailure) {
     function applyQuality(level) {
       qualityProfile = QUALITY_PROFILES[level];
       renderer.domElement.dataset.graphicsQuality = mobile ? 'mobile' : level;
-      if (mobile) return;
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualityProfile.pixelRatio));
-      reflectionTarget.setSize(qualityProfile.reflectionSize, qualityProfile.reflectionSize);
-      if (sunlight.shadow.mapSize.x !== qualityProfile.shadowSize) {
+      renderer.domElement.dataset.graphicsMode = qualityMode;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, qualityProfile.pixelRatio, mobile ? 1.35 : 2));
+      const reflectionSize = mobile ? 256 : qualityProfile.reflectionSize;
+      reflectionTarget.setSize(reflectionSize, reflectionSize);
+      if (!mobile && sunlight.shadow.mapSize.x !== qualityProfile.shadowSize) {
         sunlight.shadow.map?.dispose(); sunlight.shadow.map = null;
         sunlight.shadow.mapSize.setScalar(qualityProfile.shadowSize);
       }
@@ -453,14 +475,12 @@ export function createScene(container, initialNight, onFailure) {
         }
         rainGeometry.attributes.position.needsUpdate = true;
       }
-      const px = reducedMotion.matches ? 0 : pointer.x, py = reducedMotion.matches ? 0 : pointer.y;
-      camera.position.x = THREE.MathUtils.damp(camera.position.x, baseCamera.x + px * 1.2, 1.5, dt);
-      camera.position.y = THREE.MathUtils.damp(camera.position.y, baseCamera.y + py * .4, 1.5, dt);
-      camera.lookAt(lookAt);
+      cameraDirector.update({ time: elapsed, dt, pointer, reducedMotion: reducedMotion.matches });
       if (!reducedMotion.matches || changing || scene.userData.needsRender) {
         if (scene.userData.needsRender || changing) refreshReflection = true;
         renderer.render(scene, camera); scene.userData.needsRender = false;
-        if (!mobile && !reducedMotion.matches && lastRenderedAt) {
+        if (!readyNotified) { readyNotified = true; onReady?.(); }
+        if (!mobile && qualityMode === 'auto' && !reducedMotion.matches && lastRenderedAt) {
           const nextQuality = qualityControl.sample(now - lastRenderedAt);
           if (nextQuality) applyQuality(nextQuality);
         }
@@ -477,10 +497,7 @@ export function createScene(container, initialNight, onFailure) {
     function resize() {
       const width = container.clientWidth, height = container.clientHeight;
       camera.aspect = width / Math.max(height, 1);
-      camera.fov = width < 760 ? 70 : 48;
-      baseCamera.set(...(width < 760 ? [14, 18, 55] : [24, 15, 43]));
-      lookAt.set(...(width < 760 ? [10, 15, -65] : [-2, 10, -62]));
-      camera.position.copy(baseCamera);
+      cameraDirector.setMobile(width < 760);
       camera.updateProjectionMatrix(); renderer.setSize(width, height); scene.userData.needsRender = true;
       resumeRendering();
     }
@@ -501,18 +518,19 @@ export function createScene(container, initialNight, onFailure) {
       renderer.domElement.removeEventListener('webglcontextlost', contextLost);
       cancelAnimationFrame(frame);
     });
-    resize(); camera.lookAt(lookAt); frame = requestAnimationFrame(render);
-    function disposeScene() {
-      if (disposed) return;
-      disposed = true; initializationCleanup.forEach((cleanup) => cleanup());
-      const geometries = new Set(), materials = new Set();
-      scene.traverse((object) => { if (object.geometry) geometries.add(object.geometry); if (object.material) (Array.isArray(object.material) ? object.material : [object.material]).forEach((m) => materials.add(m)); });
-      geometries.forEach((g) => g.dispose());
-      materials.forEach((m) => m.dispose());
-      textures.forEach((t) => t.dispose()); sunlight.shadow.map?.dispose(); renderer.dispose(); renderer.forceContextLoss();
-      renderer.domElement.remove();
-    }
+    resize(); frame = requestAnimationFrame(render);
     return {
+      setView(value) {
+        if (cameraDirector.setView(value)) resumeRendering();
+      },
+      setDrift(value) { cameraDirector.setDrift(value); resumeRendering(); },
+      setQuality(value) {
+        if (!['auto', 'high', 'balanced', 'light'].includes(value)) return;
+        qualityMode = value;
+        qualityControl.reset(value === 'auto' ? undefined : value);
+        applyQuality(qualityControl.level);
+        lastRenderedAt = 0;
+      },
       setNight(value) { targetNight = value ? 1 : 0; targetDusk = 0; scene.userData.needsRender = true; },
       setMood(value) {
         targetNight = value === 'night' ? 1 : 0;
@@ -523,8 +541,7 @@ export function createScene(container, initialNight, onFailure) {
       dispose: disposeScene,
     };
   } catch (error) {
-    initializationCleanup.forEach((cleanup) => cleanup());
-    renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
+    disposeScene();
     throw error;
   }
 }

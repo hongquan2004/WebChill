@@ -30,6 +30,7 @@ Triển khai thư mục `dist` trên hosting tĩnh, không cần backend hoặc 
 - Desktop có tia nắng mềm xuyên các khoảng rừng, sương thấp nhiều lớp và bóng cây mềm; ánh sáng ấm hơn lúc hoàng hôn, tia nắng giảm khi trời tối hoặc có mưa/tuyết.
 - Bảy tảng đá giữa dòng tạo điểm nhấn với bọt phía trước, vệt nước và xoáy phía sau. Khi mưa, các vòng gợn nở trên mặt suối. Đây là hiệu ứng shader theo dòng chảy, không phải mô phỏng chất lỏng vật lý.
 - Bướm vỗ cánh ven bờ vào ban ngày, lá rơi chậm gần tán cây. Thân, cành và tán thông cùng đung đưa theo từng đợt gió, lệch nhịp giữa các cụm rừng.
+- Nút **Tùy chỉnh khung cảnh** ở góc trên bên phải mở bảng chọn góc **Toàn cảnh / Ven suối**, bật/tắt **Camera trôi nhẹ** và chất lượng **Tự động / Cao / Cân bằng / Nhẹ**. Camera chuyển góc từ từ và giữ khoảng cách với địa hình; chế độ giảm chuyển động dùng góc tĩnh.
 - Ba chế độ ánh sáng: ban ngày, hoàng hôn, ban đêm; chuyển màu và ánh sáng từ từ. Ban đêm có sao và đom đóm.
 - Bật/tắt mưa nhẹ hoặc tuyết rơi; chỉ một loại thời tiết hoạt động tại một thời điểm, chuyển cảnh có độ trễ nhẹ để hòa trộn. Trời, sương, mặt nước và âm thanh thay đổi theo thời tiết.
 - Nút **A** ở nhóm ánh sáng tự đổi **ngày → hoàng hôn → đêm** mỗi **2 phút**. Nút **A** ở nhóm thời tiết tự đổi **trời quang → mưa → tuyết** mỗi **3 phút**. Hai chu kỳ độc lập và có thể bật/tắt riêng.
@@ -40,7 +41,7 @@ Triển khai thư mục `dist` trên hosting tĩnh, không cần backend hoặc 
 - Nút mũi tên trên bảng đếm ngược thu gọn thành thanh thời gian và nút bắt đầu/tạm dừng; bấm lại để mở rộng. Bộ đếm tiếp tục chạy khi thu gọn.
 - Ẩn giao diện để ngắm cảnh; bộ đếm và âm thanh vẫn tiếp tục. Nút hình con mắt ở góc trên giúp hiện lại giao diện.
 - Toàn màn hình trên trình duyệt hỗ trợ.
-- Tự lưu ánh sáng, thời tiết, hai chế độ tự động, âm lượng và thời lượng đã chọn vào localStorage. Âm thanh luôn tắt khi tải lại trang; tiến trình đếm ngược không lưu sau tải lại.
+- Tự lưu ánh sáng, thời tiết, hai chế độ tự động, âm lượng, thời lượng, góc nhìn, chuyển động camera và chất lượng đã chọn vào localStorage. Âm thanh luôn tắt khi tải lại trang; tiến trình đếm ngược không lưu sau tải lại.
 
 ## Phím tắt
 
@@ -59,6 +60,8 @@ Phím tắt không chạy khi nhập liệu hoặc đang mở hộp đặt giờ
 - `src/main.jsx`: giao diện, bộ đếm, điều khiển và lưu tùy chọn.
 - `src/style.css`: giao diện kính mờ, vòng đếm ngược và responsive.
 - `src/NatureScene.jsx`: tải cảnh 3D riêng, nối các điều khiển, cảnh dự phòng.
+- `src/SceneSettings.jsx`, `src/scene-settings.css`: bảng cài đặt khung cảnh.
+- `src/preferences.js`: kiểm tra và khôi phục tùy chọn đã lưu.
 - `src/scene/createScene.js`: camera, ánh sáng, vật thể, nước, thời tiết và vòng dựng hình.
 - `src/scene/terrain.js`: địa hình và dòng suối từ seed cố định.
 - `src/hooks/useAmbientAudio.js`: tổng hợp âm thanh, trộn các lớp âm và chuông hoàn thành.
@@ -71,6 +74,7 @@ Phím tắt không chạy khi nhập liệu hoặc đang mở hộp đặt giờ
 - `src/scene/createRiverEffects.js`: bọt, xoáy quanh đá và vòng gợn do mưa.
 - `src/scene/createWildlife.js`: bướm và lá rơi, chuyển động trên GPU.
 - `src/scene/adaptiveQuality.js`: theo dõi nhịp dựng hình và tự chọn mức chi tiết.
+- `src/scene/createCameraDirector.js`: hai góc nhìn, chuyển góc và camera trôi nhẹ.
 - `src/Landscape.jsx`: cảnh SVG dự phòng.
 
 ## Hiệu năng và khả năng hỗ trợ
@@ -78,6 +82,8 @@ Phím tắt không chạy khi nhập liệu hoặc đang mở hộp đặt giờ
 Ưu tiên desktop, với mục tiêu tối đa 60 fps; đây là giới hạn dựng hình, không phải cam kết FPS thực tế. Rừng cây, bướm và lá dùng instancing, phần lớn chuyển động chạy trên GPU. Desktop bắt đầu ở mức cao, phản chiếu 1024 × 1024 và bóng 2048 × 2048.
 
 Chất lượng tự động có ba mức cao/cân bằng/nhẹ. Khi tốc độ giảm kéo dài, cảnh giảm độ phân giải dựng hình, độ phân giải/tần suất phản chiếu, bóng và mật độ hiệu ứng phụ. Cảnh chỉ tăng chi tiết trở lại sau thời gian chạy ổn định dài hơn; có thời gian chờ giữa các lần đổi để tránh dao động. Việc chuyển tab, đổi kích thước và bật giảm chuyển động đặt lại mẫu đo.
+
+Chọn chất lượng thủ công sẽ giữ mức đã chọn. Quay lại **Tự động** sẽ bắt đầu đo từ mức hiện tại. Cảnh SVG được giữ trong lúc tải và chỉ chuyển sang 3D sau khung hình dựng thành công đầu tiên; khi 3D lỗi, cảnh dự phòng hiện lại. Bộ đếm cập nhật không khiến toàn bộ lớp cảnh React dựng lại.
 
 Điện thoại giữ cảnh nhẹ hơn, mục tiêu 30 fps và tắt bóng đổ; các lớp tia nắng, xoáy quanh đá, gợn mưa, bướm và lá rơi mới chỉ bật trên desktop. Tab ẩn dừng dựng hình. Khi bật giảm chuyển động, cảnh tĩnh, bướm/lá và vòng gợn mưa ẩn; các điều khiển vẫn hoạt động.
 
@@ -87,4 +93,4 @@ Texture và hình học được tạo tại máy, không tải mô hình hoặc
 
 ## Kiểm tra
 
-`npm test` kiểm tra chu kỳ tự chuyển, cơ chế hạ/tăng chất lượng và các hợp đồng dữ liệu của hiệu ứng (chuyển thời tiết, giới hạn hình học, giải phóng tài nguyên). `npm run build` kiểm tra bản production. Các kiểm tra này không thay thế việc xem cảnh WebGL và đo FPS trực tiếp trên thiết bị.
+`npm test` kiểm tra chu kỳ tự chuyển, cơ chế hạ/tăng chất lượng, tùy chọn đã lưu, chuyển động camera và các hợp đồng dữ liệu của hiệu ứng (chuyển thời tiết, giới hạn hình học, giải phóng tài nguyên). `npm run build` kiểm tra bản production. Các kiểm tra này không thay thế việc xem cảnh WebGL và đo FPS trực tiếp trên thiết bị.

@@ -11,7 +11,8 @@ const LEVELS = ['light', 'balanced', 'high'];
 export function createAdaptiveQuality({ initialLevel = 'high' } = {}) {
   let index = Math.max(0, LEVELS.indexOf(initialLevel));
   let elapsed = 0, frames = 0, slowWindows = 0, fastWindows = 0, cooldown = 5000, longFrames = 0;
-  function reset() {
+  function reset(level) {
+    if (LEVELS.includes(level)) index = LEVELS.indexOf(level);
     elapsed = 0; frames = 0; slowWindows = 0; fastWindows = 0; longFrames = 0;
     cooldown = Math.max(cooldown, 3000);
   }

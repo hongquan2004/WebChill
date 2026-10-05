@@ -66,3 +66,14 @@ test('a persistently overloaded device can downgrade even above 250 ms per frame
   run(quality, 400, 30000);
   assert.equal(quality.level, 'light');
 });
+
+test('automatic quality can resume from a manual tier without stale performance evidence', () => {
+  const quality = createAdaptiveQuality();
+  run(quality, 40, 8200);
+  quality.reset('light');
+  assert.equal(quality.level, 'light');
+  assert.deepEqual(run(quality, 16.7, 15000), []);
+  assert.deepEqual(run(quality, 16.7, 7000), ['balanced']);
+  quality.reset('high');
+  assert.equal(quality.level, 'high');
+});

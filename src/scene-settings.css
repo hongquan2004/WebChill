@@ -1,0 +1,27 @@
+.scene-settings{position:static;flex:0 0 auto}
+.scene-settings-trigger{list-style:none;cursor:pointer;transition:background .2s,color .2s,border-color .2s}
+.scene-settings-trigger::-webkit-details-marker{display:none}
+.scene-settings-trigger::marker{content:''}
+.scene-settings-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.scene-settings[open]>.scene-settings-trigger{color:var(--accent);border-color:var(--line);background:#e6e9d31c}
+.is-immersed .screen-actions:has(.scene-settings[open]){opacity:1}
+.scene-settings-panel{position:absolute;top:calc(100% + 12px);right:0;width:280px;max-width:calc(100vw - 32px);max-height:calc(100svh - 116px);overflow:auto;padding:20px;border:1px solid var(--line);border-radius:20px;background:var(--glass);backdrop-filter:blur(32px) saturate(1.15);-webkit-backdrop-filter:blur(32px) saturate(1.15);box-shadow:0 16px 50px #071d2645,inset 0 1px 0 #ffffff0b;color:#f5f4e9;overscroll-behavior:contain}
+.scene-settings-panel h2{margin:0 0 20px;font-size:12px;line-height:1.5;font-weight:500;color:var(--accent)}
+.scene-settings-views{min-width:0;margin:0;padding:0;border:0}
+.scene-settings-views legend,.scene-settings-quality>label{display:block;margin-bottom:10px;padding:0;font-size:10px;line-height:1.5;color:var(--muted)}
+.scene-settings-view-options{display:flex;gap:8px}
+.scene-settings-view-options button{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:9px;min-height:70px;padding:12px 8px;border:1px solid var(--line);border-radius:11px;background:#edf1da05;color:#e6ecdcbb;font-size:10px}
+.scene-settings-view-options button:hover{background:#e6e9d314;color:#fff8e6}
+.scene-settings-view-options button[aria-pressed=true]{border-color:#e8efdc65;background:#e6e9d31a;color:var(--accent);box-shadow:inset 0 1px 0 #fff7e810}
+.scene-settings-drift{position:relative;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:54px;margin:12px 0;border-bottom:1px solid var(--line);font-size:10px;line-height:1.6;cursor:pointer}
+.scene-settings-drift input{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.scene-settings-switch{position:relative;flex:0 0 30px;width:30px;height:18px;border:1px solid #e8efdc40;border-radius:20px;background:#132d3233;transition:background .2s,border-color .2s}
+.scene-settings-switch::after{content:'';position:absolute;left:3px;top:3px;width:10px;height:10px;border-radius:50%;background:#cddbd0a6;transition:transform .2s,background .2s}
+.scene-settings-drift input:checked+.scene-settings-switch{background:#e6e9d331;border-color:#e8efdc65}
+.scene-settings-drift input:checked+.scene-settings-switch::after{transform:translateX(12px);background:var(--accent)}
+.scene-settings-drift input:focus-visible+.scene-settings-switch{outline:2px solid var(--accent);outline-offset:4px}
+.scene-settings-quality>label{margin-top:18px}
+.scene-settings-quality select{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#0e232950;color:#f5f4e9;font:inherit;font-size:11px;cursor:pointer;color-scheme:dark}
+.scene-settings-quality select:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.scene-settings-quality option{background:#1c3435;color:#f5f4e9}
+@media(prefers-reduced-motion:reduce){.scene-settings-trigger,.scene-settings-switch,.scene-settings-switch::after{transition:none}.scene-settings-view-options button:hover{transform:none}}

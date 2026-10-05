@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Play, Pause, RotateCcw, Check, X, Sun, Sunset, Moon, Volume2, VolumeX, CloudRain, Snowflake, Repeat2, Eye, EyeOff, Maximize, Minimize, Timer, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 import { NatureScene } from './NatureScene';
+import { SceneSettings } from './SceneSettings';
+import { normalizePreferences } from './preferences';
 import { useAmbientAudio } from './hooks/useAmbientAudio';
 import { useSceneCycle, MOOD_CYCLE, WEATHER_CYCLE, MOOD_INTERVAL, WEATHER_INTERVAL } from './hooks/useSceneCycle';
 import './style.css';
@@ -9,16 +11,8 @@ import './style.css';
 const STORAGE_KEY = 'webchill:preferences:v1';
 function readPreferences() {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return {
-      mood: ['day', 'sunset', 'night'].includes(value.mood) ? value.mood : 'day',
-      weather: ['clear', 'rain', 'snow'].includes(value.weather) ? value.weather : 'clear',
-      autoMood: value.autoMood === true,
-      autoWeather: value.autoWeather === true,
-      volume: Number.isFinite(value.volume) ? Math.min(100, Math.max(0, value.volume)) : 35,
-      minutes: Number.isInteger(value.minutes) && value.minutes >= 1 && value.minutes <= 180 ? value.minutes : 25,
-    };
-  } catch { return { mood: 'day', weather: 'clear', autoMood: false, autoWeather: false, volume: 35, minutes: 25 }; }
+    return normalizePreferences(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'));
+  } catch { return normalizePreferences(); }
 }
 const preferences = readPreferences();
 const MOODS = [{ id: 'day', label: 'Ban ngày', icon: Sun }, { id: 'sunset', label: 'Hoàng hôn', icon: Sunset }, { id: 'night', label: 'Ban đêm', icon: Moon }];
@@ -35,6 +29,9 @@ function App() {
   const [complete, setComplete] = useState(false);
   const [mood, setMood] = useState(preferences.mood);
   const [weather, setWeather] = useState(preferences.weather);
+  const [view, setView] = useState(preferences.view);
+  const [drift, setDrift] = useState(preferences.drift);
+  const [quality, setQuality] = useState(preferences.quality);
   const [autoMood, setAutoMood] = useState(preferences.autoMood);
   const [autoWeather, setAutoWeather] = useState(preferences.autoWeather);
   useSceneCycle(autoMood, MOOD_CYCLE, MOOD_INTERVAL, setMood);
@@ -55,8 +52,8 @@ function App() {
   chimeRef.current = sound.chime;
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ mood, weather, autoMood, autoWeather, volume, minutes })); } catch { /* Preferences are optional when storage is disabled. */ }
-  }, [mood, weather, autoMood, autoWeather, volume, minutes]);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ mood, weather, autoMood, autoWeather, volume, minutes, view, drift, quality })); } catch { /* Preferences are optional when storage is disabled. */ }
+  }, [mood, weather, autoMood, autoWeather, volume, minutes, view, drift, quality]);
 
   const finishSession = useCallback(() => {
     setRemaining(0); setRunning(false); setComplete(true);
@@ -131,9 +128,10 @@ function App() {
   }, [digits, running, complete]);
 
   return <main className={'app ' + mood + (immersed ? ' is-immersed' : '') + (weather === 'rain' ? ' is-raining' : weather === 'snow' ? ' is-snowing' : '')}>
-    <NatureScene mood={mood} weather={weather} />
+    <NatureScene mood={mood} weather={weather} view={view} drift={drift} quality={quality} />
     <div className="scene-shade" />
     <div className="screen-actions" role="group" aria-label="Hiển thị">
+      <SceneSettings view={view} onViewChange={setView} drift={drift} onDriftChange={setDrift} quality={quality} onQualityChange={setQuality} />
       <IconButton label={immersed ? 'Hiện giao diện (H)' : 'Ẩn giao diện (H)'} active={immersed} onClick={() => setImmersed(!immersed)}>{immersed ? <Eye size={18} /> : <EyeOff size={18} />}</IconButton>
       <IconButton label={fullscreen ? 'Thoát toàn màn hình (F)' : 'Toàn màn hình (F)'} onClick={toggleFullscreen}>{fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}</IconButton>
     </div>
