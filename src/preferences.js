@@ -1,3 +1,6 @@
+import { normalizeMix } from './audio/mix.js';
+import { normalizeTimerSettings } from './timerSession.js';
+
 export function normalizePreferences(value = {}) {
   const saved = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
@@ -10,5 +13,8 @@ export function normalizePreferences(value = {}) {
     view: ['valley', 'stream'].includes(saved.view) ? saved.view : 'valley',
     drift: typeof saved.drift === 'boolean' ? saved.drift : true,
     quality: ['auto', 'high', 'balanced', 'light'].includes(saved.quality) ? saved.quality : 'auto',
+    showPerformance: saved.showPerformance === true,
+    mix: normalizeMix(saved.mix),
+    timerSettings: normalizeTimerSettings(saved.timerSettings),
   };
 }

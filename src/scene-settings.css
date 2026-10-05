@@ -24,4 +24,5 @@
 .scene-settings-quality select{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#0e232950;color:#f5f4e9;font:inherit;font-size:11px;cursor:pointer;color-scheme:dark}
 .scene-settings-quality select:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
 .scene-settings-quality option{background:#1c3435;color:#f5f4e9}
+.scene-performance{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}.scene-performance dl{margin:0;display:grid;gap:9px}.scene-performance dl>div{display:flex;justify-content:space-between;gap:10px}.scene-performance dt,.scene-performance dd{margin:0}.scene-performance dd{color:var(--accent)}.scene-performance p{margin:0;line-height:1.6}
 @media(prefers-reduced-motion:reduce){.scene-settings-trigger,.scene-settings-switch,.scene-settings-switch::after{transition:none}.scene-settings-view-options button:hover{transform:none}}

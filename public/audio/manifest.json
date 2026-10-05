@@ -1,0 +1,59 @@
+{
+  "verifiedOn": "2026-10-05",
+  "format": "Freesound public HQ MP3 preview, unmodified downloaded file",
+  "playbackProcessing": "Client-side equal-power loop overlap and conservative RMS/peak gain normalization; no music or speech added.",
+  "recordings": [
+    {
+      "id": "stream",
+      "title": "Small Stream Ambience 1",
+      "author": "deadrobotmusic",
+      "source": "https://freesound.org/people/deadrobotmusic/sounds/687058/",
+      "download": "https://cdn.freesound.org/previews/687/687058_11532701-hq.mp3",
+      "durationSeconds": 46.567,
+      "file": "stream.mp3",
+      "bytes": 1096926,
+      "sha256": "445550a15201de20ae42f66226763ca815d9fc8913c3d0ad2e59656a5ff4cdba",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+    },
+    {
+      "id": "wind",
+      "title": "Wind in trees.WAV",
+      "author": "nickydunne",
+      "source": "https://freesound.org/people/nickydunne/sounds/463551/",
+      "download": "https://cdn.freesound.org/previews/463/463551_9359506-hq.mp3",
+      "durationSeconds": 90.814,
+      "file": "wind.mp3",
+      "bytes": 2046048,
+      "sha256": "125167bf1c874f874aaab0a5befc5f34a3d14ea6568cd8c3c80d8e20874cbfae",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+    },
+    {
+      "id": "rain",
+      "title": "Soft Rain Ambience edlarez vsnr.wav",
+      "author": "visionear",
+      "source": "https://freesound.org/people/visionear/sounds/573335/",
+      "download": "https://cdn.freesound.org/previews/573/573335_10869493-hq.mp3",
+      "durationSeconds": 92.376,
+      "file": "rain.mp3",
+      "bytes": 2275872,
+      "sha256": "4a3c43e30c78b74bfe52472e1ffaeab404cc1a4fc1c48f56ea40df5377851757",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+    },
+    {
+      "id": "birds",
+      "title": "Forest birds - ambient seamless loop",
+      "author": "Magnesus",
+      "source": "https://freesound.org/people/Magnesus/sounds/723913/",
+      "download": "https://cdn.freesound.org/previews/723/723913_2008500-hq.mp3",
+      "durationSeconds": 27.051,
+      "file": "birds.mp3",
+      "bytes": 637824,
+      "sha256": "9aebcb869cf37040c4588fc05d72bed197951aaa1beacb6874b379c69e379dbb",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
+    }
+  ]
+}

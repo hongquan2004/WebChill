@@ -3,8 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { Play, Pause, RotateCcw, Check, X, Sun, Sunset, Moon, Volume2, VolumeX, CloudRain, Snowflake, Repeat2, Eye, EyeOff, Maximize, Minimize, Timer, SlidersHorizontal, ChevronDown, ChevronUp } from 'lucide-react';
 import { NatureScene } from './NatureScene';
 import { SceneSettings } from './SceneSettings';
+import { AudioMixer } from './AudioMixer';
+import { TimerSettings } from './TimerSettings';
 import { normalizePreferences } from './preferences';
 import { useAmbientAudio } from './hooks/useAmbientAudio';
+import { useRelaxTimer } from './hooks/useRelaxTimer';
 import { useSceneCycle, MOOD_CYCLE, WEATHER_CYCLE, MOOD_INTERVAL, WEATHER_INTERVAL } from './hooks/useSceneCycle';
 import './style.css';
 
@@ -24,14 +27,15 @@ function IconButton({ label, children, active, className = '', ...props }) {
 
 function App() {
   const [minutes, setMinutes] = useState(preferences.minutes);
-  const [remaining, setRemaining] = useState(preferences.minutes * 60);
-  const [running, setRunning] = useState(false);
-  const [complete, setComplete] = useState(false);
   const [mood, setMood] = useState(preferences.mood);
   const [weather, setWeather] = useState(preferences.weather);
   const [view, setView] = useState(preferences.view);
   const [drift, setDrift] = useState(preferences.drift);
   const [quality, setQuality] = useState(preferences.quality);
+  const [showPerformance, setShowPerformance] = useState(preferences.showPerformance);
+  const [performanceStats, setPerformanceStats] = useState(null);
+  const [mix, setMix] = useState(preferences.mix);
+  const [timerSettings, setTimerSettings] = useState(preferences.timerSettings);
   const [autoMood, setAutoMood] = useState(preferences.autoMood);
   const [autoWeather, setAutoWeather] = useState(preferences.autoWeather);
   useSceneCycle(autoMood, MOOD_CYCLE, MOOD_INTERVAL, setMood);
@@ -44,50 +48,21 @@ function App() {
   const [custom, setCustom] = useState(false);
   const [customMinutes, setCustomMinutes] = useState(String(preferences.minutes));
   const [notice, setNotice] = useState('');
-  const deadline = useRef(0);
-  const completionNotified = useRef(false);
   const dialog = useRef(null);
-  const sound = useAmbientAudio({ muted, volume, weather, onMutedChange: setMuted });
-  const chimeRef = useRef(sound.chime);
+  const chimeRef = useRef(() => {});
+  const onBoundary = useCallback(() => chimeRef.current(), []);
+  const session = useRelaxTimer({ minutes, settings: timerSettings, onBoundary });
+  const { remaining, running, complete, phase, phaseDuration, toggle: toggleTimer, reset: resetTimer } = session;
+  const sound = useAmbientAudio({ muted, volume, weather, mood, mix, sessionGain: session.sessionGain, onMutedChange: setMuted });
   chimeRef.current = sound.chime;
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ mood, weather, autoMood, autoWeather, volume, minutes, view, drift, quality })); } catch { /* Preferences are optional when storage is disabled. */ }
-  }, [mood, weather, autoMood, autoWeather, volume, minutes, view, drift, quality]);
-
-  const finishSession = useCallback(() => {
-    setRemaining(0); setRunning(false); setComplete(true);
-    if (!completionNotified.current) { completionNotified.current = true; chimeRef.current(); }
-  }, []);
-
-  useEffect(() => {
-    if (!running) return;
-    const tick = () => {
-      const left = Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000));
-      setRemaining(left);
-      if (left === 0) finishSession();
-    };
-    tick();
-    const id = setInterval(tick, 250);
-    return () => clearInterval(id);
-  }, [running, finishSession]);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ mood, weather, autoMood, autoWeather, volume, minutes, view, drift, quality, showPerformance, mix, timerSettings })); } catch { /* Preferences are optional when storage is disabled. */ }
+  }, [mood, weather, autoMood, autoWeather, volume, minutes, view, drift, quality, showPerformance, mix, timerSettings]);
 
   const choose = useCallback((value) => {
-    completionNotified.current = false;
-    setMinutes(value); setRemaining(value * 60); setRunning(false); setComplete(false);
-  }, []);
-
-  const toggleTimer = useCallback(() => {
-    if (running) {
-      const left = Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000));
-      if (left === 0) finishSession();
-      else { setRemaining(left); setRunning(false); }
-    } else {
-      const seconds = remaining || minutes * 60;
-      setRemaining(seconds); deadline.current = Date.now() + seconds * 1000;
-      completionNotified.current = false; setComplete(false); setRunning(true);
-    }
-  }, [running, remaining, minutes, finishSession]);
+    setMinutes(value); resetTimer(value);
+  }, [resetTimer]);
 
   const toggleFullscreen = useCallback(async () => {
     try {
@@ -122,23 +97,23 @@ function App() {
   }, [custom, toggleTimer, sound.toggleAudio, toggleFullscreen]);
 
   const digits = String(Math.floor(remaining / 60)).padStart(2, '0') + ':' + String(remaining % 60).padStart(2, '0');
-  const progress = Math.max(0, Math.min(1, remaining / (minutes * 60)));
+  const progress = Math.max(0, Math.min(1, remaining / phaseDuration));
   useEffect(() => {
     document.title = running ? digits + ' · Lặng' : complete ? 'Hết giờ · Lặng' : 'Lặng — Một chút bình yên';
   }, [digits, running, complete]);
 
   return <main className={'app ' + mood + (immersed ? ' is-immersed' : '') + (weather === 'rain' ? ' is-raining' : weather === 'snow' ? ' is-snowing' : '')}>
-    <NatureScene mood={mood} weather={weather} view={view} drift={drift} quality={quality} />
+    <NatureScene mood={mood} weather={weather} view={view} drift={drift} quality={quality} showPerformance={showPerformance} onPerformance={setPerformanceStats} />
     <div className="scene-shade" />
     <div className="screen-actions" role="group" aria-label="Hiển thị">
-      <SceneSettings view={view} onViewChange={setView} drift={drift} onDriftChange={setDrift} quality={quality} onQualityChange={setQuality} />
+      <SceneSettings view={view} onViewChange={setView} drift={drift} onDriftChange={setDrift} quality={quality} onQualityChange={setQuality} showPerformance={showPerformance} onShowPerformanceChange={setShowPerformance} performanceStats={performanceStats} />
       <IconButton label={immersed ? 'Hiện giao diện (H)' : 'Ẩn giao diện (H)'} active={immersed} onClick={() => setImmersed(!immersed)}>{immersed ? <Eye size={18} /> : <EyeOff size={18} />}</IconButton>
       <IconButton label={fullscreen ? 'Thoát toàn màn hình (F)' : 'Toàn màn hình (F)'} onClick={toggleFullscreen}>{fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}</IconButton>
     </div>
 
     <section className="content" inert={immersed} aria-label="Hẹn giờ">
       <div className={'timer-card' + (running ? ' is-running' : '') + (complete ? ' is-complete' : '') + (timerCollapsed ? ' is-collapsed' : '')}>
-        <div className="timer-heading"><span><Timer size={14} /> ĐẾM NGƯỢC</span><div className="timer-heading-controls"><span className={'status-dot' + (running ? ' pulse' : '')} /><IconButton className="timer-collapse" label={timerCollapsed ? 'Mở rộng bảng đếm ngược' : 'Thu gọn bảng đếm ngược'} aria-expanded={!timerCollapsed} onClick={() => setTimerCollapsed((value) => !value)}>{timerCollapsed ? <ChevronUp size={17}/> : <ChevronDown size={17}/>}</IconButton></div></div>
+        <div className="timer-heading"><span><Timer size={14} /> {phase === 'break' ? 'NGHỈ NGẮN' : 'ĐẾM NGƯỢC'}</span><div className="timer-heading-controls"><span className={'status-dot' + (running ? ' pulse' : '')} /><TimerSettings settings={timerSettings} onChange={setTimerSettings} /><IconButton className="timer-collapse" label={timerCollapsed ? 'Mở rộng bảng đếm ngược' : 'Thu gọn bảng đếm ngược'} aria-expanded={!timerCollapsed} onClick={() => setTimerCollapsed((value) => !value)}>{timerCollapsed ? <ChevronUp size={17}/> : <ChevronDown size={17}/>}</IconButton></div></div>
         <div className="timer-dial">
           <svg className="dial-ring" viewBox="0 0 200 200" aria-hidden="true">
             <defs><linearGradient id="timer-gradient" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#f4dfae"/><stop offset="1" stopColor="#a5cdb3"/></linearGradient></defs>
@@ -146,17 +121,18 @@ function App() {
             <circle cx="100" cy="100" r="84" className="dial-track" />
             <circle cx="100" cy="100" r="84" className="dial-progress" strokeDasharray={CIRCUMFERENCE} strokeDashoffset={CIRCUMFERENCE * (1 - progress)} />
           </svg>
-          <div className="dial-content"><div className="timer" role="timer" aria-label={'Còn ' + Math.floor(remaining / 60) + ' phút ' + remaining % 60 + ' giây'}>{digits}</div><p className="timer-note" aria-live="polite">{complete ? 'Hoàn thành' : running ? 'Đang thư giãn' : remaining < minutes * 60 ? 'Đã tạm dừng' : 'Sẵn sàng'}</p></div>
+          <div className="dial-content"><div className="timer" role="timer" aria-label={'Còn ' + Math.floor(remaining / 60) + ' phút ' + remaining % 60 + ' giây'}>{digits}</div><p className="timer-note" aria-live="polite">{complete ? 'Hoàn thành' : running ? phase === 'break' ? 'Đang nghỉ ngắn' : 'Đang thư giãn' : remaining < phaseDuration ? 'Đã tạm dừng' : 'Sẵn sàng'}</p></div>
         </div>
         <div className="presets" aria-label="Thời gian đặt sẵn">
           {[5, 15, 25, 45].map((value) => <button key={value} type="button" className={minutes === value ? 'selected' : ''} aria-pressed={minutes === value} onClick={() => choose(value)}>{value}<span> phút</span></button>)}
           <button type="button" className={![5, 15, 25, 45].includes(minutes) ? 'selected custom-preset' : 'custom-preset'} aria-label="Tùy chỉnh thời gian" title="Tùy chỉnh thời gian" onClick={() => { setCustomMinutes(String(minutes)); setCustom(true); }}><SlidersHorizontal size={14}/></button>
         </div>
-        <div className="timer-actions"><button className="start" aria-label={running ? 'Tạm dừng' : remaining < minutes * 60 && remaining > 0 ? 'Tiếp tục' : complete ? 'Bắt đầu lại' : 'Bắt đầu'} onClick={toggleTimer}>{running ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}<span>{running ? 'Tạm dừng' : remaining < minutes * 60 && remaining > 0 ? 'Tiếp tục' : complete ? 'Bắt đầu lại' : 'Bắt đầu'}</span></button><IconButton label="Đặt lại bộ đếm" className="reset" onClick={() => choose(minutes)}><RotateCcw size={17}/></IconButton></div>
+        <div className="timer-actions"><button className="start" aria-label={running ? 'Tạm dừng' : remaining < phaseDuration && remaining > 0 ? 'Tiếp tục' : complete ? 'Bắt đầu lại' : 'Bắt đầu'} onClick={toggleTimer}>{running ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}<span>{running ? 'Tạm dừng' : remaining < phaseDuration && remaining > 0 ? 'Tiếp tục' : complete ? 'Bắt đầu lại' : 'Bắt đầu'}</span></button><IconButton label="Đặt lại bộ đếm" className="reset" onClick={() => choose(minutes)}><RotateCcw size={17}/></IconButton></div>
       </div>
     </section>
 
     <div className="scene-controls" role="group" aria-label="Điều khiển phong cảnh" inert={immersed}>
+      <AudioMixer mix={mix} onMixChange={setMix} masterMuted={muted} recordingStatus={sound.recordingStatus} />
       <div className="audio-group"><IconButton label={muted ? 'Bật âm thanh (M)' : 'Tắt âm thanh (M)'} active={!muted} disabled={sound.busy} onClick={sound.toggleAudio}>{muted || volume === 0 ? <VolumeX size={18}/> : <Volume2 size={18}/>}</IconButton><input className="volume-slider" type="range" min="0" max="100" step="1" value={volume} onChange={(e) => setVolume(Number(e.target.value))} aria-label="Âm lượng" aria-valuetext={volume + '%'} title={'Âm lượng: ' + volume + '%'} style={{ '--volume': volume + '%' }}/><output className="volume-value" aria-hidden="true">{volume}<span>%</span></output></div>
       <span className="control-divider" />
       <div className="mood-group" role="group" aria-label="Ánh sáng">{MOODS.map(({ id, label, icon: Icon }) => <IconButton key={id} label={label} active={mood === id} onClick={() => { setAutoMood(false); setMood(id); }}><Icon size={18}/></IconButton>)}<IconButton className="auto-button" label={autoMood ? 'Tắt tự chuyển buổi (mỗi 2 phút)' : 'Tự chuyển buổi (mỗi 2 phút)'} active={autoMood} onClick={() => setAutoMood(!autoMood)}><Repeat2 size={17}/></IconButton></div>

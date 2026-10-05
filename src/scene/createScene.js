@@ -10,8 +10,12 @@ import { createRiverEffects } from './createRiverEffects';
 import { createWildlife } from './createWildlife';
 import { createAdaptiveQuality, QUALITY_PROFILES } from './adaptiveQuality';
 import { createCameraDirector } from './createCameraDirector';
+import { createPerformanceMonitor } from './performanceMonitor';
+import { createWeatherEvolution } from './weatherEvolution';
+import { createWeatherDetails } from './createWeatherDetails';
+import { createCascade } from './createCascade';
 
-export function createScene(container, initialNight, onFailure, onReady) {
+export function createScene(container, initialNight, onFailure, onReady, onPerformance) {
   const rand = random();
   const mobile = container.clientWidth < 760;
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: mobile ? 'low-power' : 'high-performance' });
@@ -47,6 +51,7 @@ export function createScene(container, initialNight, onFailure, onReady) {
     renderer.shadowMap.needsUpdate = true;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.13;
+    renderer.info.autoReset = false;
     renderer.domElement.setAttribute('aria-hidden', 'true');
     container.appendChild(renderer.domElement);
     scene = new THREE.Scene();
@@ -60,6 +65,9 @@ export function createScene(container, initialNight, onFailure, onReady) {
     const color = new THREE.Color();
     let previous = 0, elapsed = 0, nextRenderAt = 0, lastRenderedAt = 0, readyNotified = false;
     const qualityControl = createAdaptiveQuality();
+    const performanceMonitor = createPerformanceMonitor();
+    const weatherEvolution = createWeatherEvolution();
+    let diagnosticsEnabled = false;
     let qualityProfile = QUALITY_PROFILES.high;
     let qualityMode = 'auto';
     let refreshReflection = true, reflectionFrame = 0;
@@ -282,6 +290,10 @@ export function createScene(container, initialNight, onFailure, onReady) {
     initializationCleanup.push(() => atmosphere.dispose());
     const wildlife = createWildlife(scene, { mobile, rand: random(9067) });
     initializationCleanup.push(() => wildlife.dispose());
+    const weatherDetails = createWeatherDetails(scene, { mobile, rand: random(5237) });
+    initializationCleanup.push(() => weatherDetails.dispose());
+    const cascade = createCascade(scene, { mobile, rand: random(2983) });
+    initializationCleanup.push(() => cascade.dispose());
 
     // Sparse flowers and reeds add a detailed foreground without filling the valley.
     const flowerCount = mobile ? 100 : 220;
@@ -377,6 +389,8 @@ export function createScene(container, initialNight, onFailure, onReady) {
       atmosphere.setQuality(level);
       riverEffects.setQuality(level);
       wildlife.setQuality(level);
+      weatherDetails.setQuality(level);
+      cascade.setQuality(level);
       renderer.shadowMap.needsUpdate = true;
       refreshReflection = true;
       scene.userData.needsRender = true;
@@ -407,11 +421,14 @@ export function createScene(container, initialNight, onFailure, onReady) {
       rain = reducedMotion.matches ? targetRain : THREE.MathUtils.damp(rain, targetRain, 1.4, dt);
       snow = reducedMotion.matches ? targetSnow : THREE.MathUtils.damp(snow, targetSnow, 1.2, dt);
       const overcast = Math.min(1, rain + snow * .68);
-      vegetation.update(elapsed, reducedMotion.matches, rain, snow);
-      landscapeDetails.update(rain, snow);
+      const surfaces = weatherEvolution.update({ dt, rain, snow, night, reducedMotion: reducedMotion.matches });
+      vegetation.update(elapsed, reducedMotion.matches, rain, surfaces.snowCover);
+      landscapeDetails.update(surfaces.wetness, surfaces.snowCover);
       skyDetails.update(elapsed, night);
       riverEffects.update({ time: elapsed, rain, night, dusk, snow, reducedMotion: reducedMotion.matches });
       wildlife.update({ time: elapsed, rain, night, dusk, snow, reducedMotion: reducedMotion.matches });
+      weatherDetails.update({ time: elapsed, ...surfaces, rain, snow, night, reducedMotion: reducedMotion.matches });
+      cascade.update({ time: elapsed, rain, night, dusk, snowCover: surfaces.snowCover, reducedMotion: reducedMotion.matches });
       snowfall.update({ time: elapsed, intensity: snow, reducedMotion: reducedMotion.matches });
       skyMaterial.uniforms.night.value = night;
       skyMaterial.uniforms.dusk.value = dusk;
@@ -478,7 +495,15 @@ export function createScene(container, initialNight, onFailure, onReady) {
       cameraDirector.update({ time: elapsed, dt, pointer, reducedMotion: reducedMotion.matches });
       if (!reducedMotion.matches || changing || scene.userData.needsRender) {
         if (scene.userData.needsRender || changing) refreshReflection = true;
+        renderer.info.reset();
+        const renderStarted = diagnosticsEnabled ? performance.now() : 0;
         renderer.render(scene, camera); scene.userData.needsRender = false;
+        if (diagnosticsEnabled) {
+          const counters = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, quality: qualityControl.level, mode: qualityMode };
+          const measured = reducedMotion.matches ? { ...counters, state: 'static', fps: null, frameMs: null }
+            : performanceMonitor.sample({ now, renderMs: performance.now() - renderStarted, ...counters });
+          if (measured) onPerformance?.(measured);
+        }
         if (!readyNotified) { readyNotified = true; onReady?.(); }
         if (!mobile && qualityMode === 'auto' && !reducedMotion.matches && lastRenderedAt) {
           const nextQuality = qualityControl.sample(now - lastRenderedAt);
@@ -490,6 +515,7 @@ export function createScene(container, initialNight, onFailure, onReady) {
     function resetFrameTiming() {
       previous = 0; nextRenderAt = 0; lastRenderedAt = 0;
       qualityControl.reset();
+      performanceMonitor.reset();
     }
     function resumeRendering() {
       resetFrameTiming(); refreshReflection = true; scene.userData.needsRender = true;
@@ -520,6 +546,12 @@ export function createScene(container, initialNight, onFailure, onReady) {
     });
     resize(); frame = requestAnimationFrame(render);
     return {
+      setDiagnostics(enabled) {
+        diagnosticsEnabled = Boolean(enabled);
+        performanceMonitor.reset();
+        if (diagnosticsEnabled) onPerformance?.({ state: 'warming' });
+        scene.userData.needsRender = true;
+      },
       setView(value) {
         if (cameraDirector.setView(value)) resumeRendering();
       },

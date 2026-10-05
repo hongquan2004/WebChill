@@ -2,7 +2,7 @@ import { useEffect, useId, useRef } from 'react';
 import { Mountain, Settings2, Waves } from 'lucide-react';
 import './scene-settings.css';
 
-export function SceneSettings({ view = 'valley', onViewChange, drift = true, onDriftChange, quality = 'auto', onQualityChange }) {
+export function SceneSettings({ view = 'valley', onViewChange, drift = true, onDriftChange, quality = 'auto', onQualityChange, showPerformance = false, onShowPerformanceChange, performanceStats }) {
   const details = useRef(null);
   const trigger = useRef(null);
   const labelId = useId();
@@ -62,6 +62,21 @@ export function SceneSettings({ view = 'valley', onViewChange, drift = true, onD
           <option value="light">Nhẹ</option>
         </select>
       </div>
+      <label className="scene-settings-drift">
+        <span>Hiển thị hiệu năng</span>
+        <input type="checkbox" checked={showPerformance} onChange={(event) => onShowPerformanceChange?.(event.target.checked)} />
+        <span className="scene-settings-switch" aria-hidden="true" />
+      </label>
+      {showPerformance && <div className="scene-performance" aria-label="Hiệu năng cảnh 3D">
+        {performanceStats?.state === 'running' || performanceStats?.state === 'static' ? <>
+          <dl>
+            <div><dt>FPS</dt><dd>{performanceStats.state === 'static' ? 'Tĩnh' : Math.round(performanceStats.fps)}</dd></div>
+            <div><dt>Mỗi khung hình</dt><dd>{performanceStats.frameMs == null ? '—' : performanceStats.frameMs.toFixed(1) + ' ms'}</dd></div>
+            <div><dt>Lượt vẽ</dt><dd>{performanceStats.calls}</dd></div>
+            <div><dt>Mức đang dùng</dt><dd>{{ high: 'Cao', balanced: 'Cân bằng', light: 'Nhẹ' }[performanceStats.quality]}</dd></div>
+          </dl>
+        </> : <p>{performanceStats?.state === 'unavailable' ? 'Đang dùng cảnh dự phòng.' : 'Đang đo khung hình…'}</p>}
+      </div>}
     </div>
   </details>;
 }
